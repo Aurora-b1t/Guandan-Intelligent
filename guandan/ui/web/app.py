@@ -159,6 +159,184 @@ def api_ai_log_clear():
     return jsonify({"ok": True})
 
 
+@app.route("/api/config", methods=["GET", "POST"])
+def api_config():
+    """Get or update AI configuration."""
+    game = _get_game()
+    if request.method == "POST":
+        data = request.get_json()
+        if data:
+            if "global_model" in data:
+                game.config["global_model"] = data["global_model"]
+            if "global_params" in data:
+                game.config["global_params"] = data["global_params"]
+            if "players" in data:
+                for pid, cfg in data["players"].items():
+                    p = int(pid)
+                    if "model" in cfg:
+                        game.config["players"][p]["model"] = cfg["model"]
+                    if "params" in cfg:
+                        game.config["players"][p]["params"] = cfg["params"]
+            if "auto_play" in data:
+                game._auto_play = data["auto_play"]
+    from ...ai.registry import list_models, get_model_defaults
+    return jsonify({
+        "config": game.config,
+        "available_models": list_models(),
+        "model_defaults": {m: get_model_defaults(m) for m in list_models()},
+    })
+
+
+@app.route("/api/suggest")
+def api_suggest():
+    """AI suggestion for human player: return top candidates with scores."""
+    from ...ai.player_view import PlayerView
+    from ...ai.logger import AILogger
+
+    game = _get_game()
+    if game.state is None or not game._is_human_turn():
+        return jsonify({"candidates": [], "message": "不是你的回合"})
+
+    pid = game.HUMAN_ID
+    hand = game.state.hands[pid]
+
+    # Use Monte Carlo for deep analysis (more samples for suggestion)
+    from ...ai.agent import MonteCarloAgent
+    agent = MonteCarloAgent(num_samples=80, time_limit_ms=8000)
+    view = PlayerView(game.state, pid)
+
+    AILogger.get().clear()
+
+    # Get MC analysis
+    _ = agent.choose_play(view)
+
+    # Read the log and validate candidates
+    from ...combo_compare import can_beat
+    from ...combo_parser import ComboParser
+    parser = ComboParser(game.state.level)
+    log_entries = AILogger.get().get_recent(200)
+    candidates = []
+    seen = set()
+    for e in log_entries:
+        if e["type"] == "decision_end" and e["data"].get("candidates_scored"):
+            for c in e["data"]["candidates_scored"]:
+                cards_display = c.get("cards", [])
+                key = tuple(sorted(cards_display))
+                if key in seen:
+                    continue
+                seen.add(key)
+                # Validate: can this actually be played?
+                card_objs = [card for card in hand if card.display in cards_display]
+                if len(card_objs) != len(cards_display):
+                    continue  # cards not in hand
+                combo = parser.parse(card_objs)
+                if combo is None:
+                    continue  # invalid combo
+                if game.state.table.current_combo and not can_beat(combo, game.state.table.current_combo):
+                    continue  # doesn't beat table
+                candidates.append({
+                    "type": c.get("type", "?"),
+                    "cards": cards_display,
+                    "win_rate": c.get("win_rate", 0),
+                })
+
+    candidates.sort(key=lambda c: c.get("win_rate", 0), reverse=True)
+
+    return jsonify({
+        "candidates": candidates,
+        "hand_size": len(hand),
+        "message": f"分析了 {len(candidates)} 个候选",
+    })
+
+
+@app.route("/api/evaluate", methods=["POST"])
+def api_evaluate():
+    """Evaluate selected cards using Monte Carlo simulation."""
+    from ...combo_parser import ComboParser
+    from ...combo_compare import can_beat
+    from ...ai.player_view import PlayerView
+    from ...ai.agent import MonteCarloAgent
+    from ...ai.logger import AILogger
+
+    game = _get_game()
+    if game.state is None:
+        return jsonify({"error": "游戏未开始"})
+
+    data = request.get_json() or {}
+    card_ids = data.get("card_ids", [])
+    if not card_ids:
+        # No cards selected — check if human has any valid play
+        hand = game.state.hands[game.HUMAN_ID]
+        table_combo = game.state.table.current_combo
+        is_lead = (table_combo is None or game.state.table.last_played_player == game.HUMAN_ID)
+        if is_lead:
+            return jsonify({"info": "你是首家，可任意出牌"})
+
+        # Check if any card in hand can beat the table
+        from ...combo_finder import ComboFinder
+        finder = ComboFinder(hand, game.state.level)
+        response = finder.pick_response(table_combo)
+        bomb = finder._find_any_bomb()
+        if not response and not bomb:
+            return jsonify({"info": "手牌中没有任何能压过牌桌的牌型，只能过牌"})
+        return jsonify({"info": "请选中要评估的牌"})
+
+    hand = game.state.hands[game.HUMAN_ID]
+    cards = [c for c in hand if c.id in card_ids]
+    if len(cards) != len(card_ids):
+        return jsonify({"error": "选中的牌不在手牌中"})
+
+    parser = ComboParser(game.state.level)
+    combo = parser.parse(cards)
+    if combo is None:
+        return jsonify({"error": "选中的牌不构成合法牌型"})
+
+    table_combo = game.state.table.current_combo
+    is_lead = (table_combo is None or game.state.table.last_played_player == game.HUMAN_ID)
+    if not is_lead and not can_beat(combo, table_combo):
+        return jsonify({"error": "打不过牌桌上的牌型"})
+
+    # Run MC analysis for this specific play
+    AILogger.get().clear()
+    agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)
+    view = PlayerView(game.state, game.HUMAN_ID)
+    agent.choose_play(view)
+
+    # Extract win rate for this specific candidate
+    log_entries = AILogger.get().get_recent(200)
+    win_rate = None
+    for e in log_entries:
+        if e["type"] == "decision_end" and e["data"].get("candidates_scored"):
+            for c in e["data"]["candidates_scored"]:
+                if set(c.get("cards", [])) == set(card.display for card in cards):
+                    win_rate = c.get("win_rate")
+
+    from ...ai.hand_eval import estimate_rounds
+    used_ids = {c.id for c in cards}
+    hand_after = tuple(c for c in hand if c.id not in used_ids)
+
+    return jsonify({
+        "valid": True,
+        "combo_type": combo.combo_type.name,
+        "cards": [c.display for c in cards],
+        "win_rate": win_rate,
+        "rounds_before": estimate_rounds(hand, game.state.level),
+        "rounds_after": estimate_rounds(hand_after, game.state.level),
+        "is_bomb": combo.is_bomb,
+    })
+
+
+@app.route("/api/auto_play", methods=["POST"])
+def api_auto_play():
+    """Toggle full auto-play mode."""
+    game = _get_game()
+    data = request.get_json() or {}
+    game._auto_play = data.get("enabled", False)
+    if game._auto_play and game.state is not None:
+        game._ai_running = True
+    return jsonify({"auto_play": game._auto_play})
+
+
 @app.route("/api/new_round", methods=["POST"])
 def api_new_round():
     game = _get_game()

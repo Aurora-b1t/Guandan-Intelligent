@@ -39,8 +39,15 @@ class InteractiveGame:
         self._game_over = False
         self._winning_team: Optional[int] = None
         self._message = ""
-        # Step-by-step AI: each get_state() advances one AI turn
         self._ai_running = False
+        # AI config
+        from ..ai.registry import DEFAULT_CONFIG
+        self.config = dict(DEFAULT_CONFIG)
+        self.config["global_params"] = dict(DEFAULT_CONFIG["global_params"])
+        self.config["players"] = {
+            p: dict(cfg) for p, cfg in DEFAULT_CONFIG["players"].items()
+        }
+        self._auto_play = False  # full auto mode (all AI)
 
     # ------------------------------------------------------------------
     # Public API
@@ -192,19 +199,27 @@ class InteractiveGame:
             if table.pass_count >= len(other_active):
                 self.state.current_player = table.last_played_player
                 self._start_new_trick()
-                # If new leader is human, AI is done
                 if self.state.current_player == self.HUMAN_ID:
-                    self._ai_running = False
-                    return
-                # Otherwise AI leads next — process below
+                    if self._auto_play:
+                        pass  # continue to AI processing below
+                    else:
+                        self._ai_running = False
+                        return
 
         # Get next player to act
         current = self._next_active_player(self.state.current_player)
 
         if current == self.HUMAN_ID:
-            self.state.current_player = current
-            self._ai_running = False
-            return
+            if self._auto_play:
+                # Human slot is AI-controlled — keep running
+                self._ai_play(self.HUMAN_ID)
+                if len(self.state.finished_positions) >= 3:
+                    self._ai_running = False
+                return
+            else:
+                self.state.current_player = current
+                self._ai_running = False
+                return
 
         # Process this AI's turn
         self._ai_play(current)
@@ -222,12 +237,11 @@ class InteractiveGame:
 
     def _ai_play(self, player_id: int):
         """Have an AI player make a move (with restricted view)."""
-        from ..ai.agent import HeuristicAgent
         from ..ai.player_view import PlayerView
-        agent = HeuristicAgent()
+        from ..ai.registry import create_agent_for_player
         hand = self.state.hands[player_id]
 
-        # Give AI a restricted view — can't see other players' cards
+        agent = create_agent_for_player(self.config, player_id)
         view = PlayerView(self.state, player_id)
         play_cards = agent.choose_play(view)
 
@@ -467,6 +481,7 @@ class InteractiveGame:
             "trick_history": trick_history,
             "ai_running": self._ai_running,
             "ai_thinking_player": self.state.current_player if self._ai_running else -1,
+            "auto_play": self._auto_play,
         }
 
     def _card_json(self, card: Card) -> dict:

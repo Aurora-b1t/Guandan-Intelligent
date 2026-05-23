@@ -53,7 +53,6 @@ async function playCards() {
   let cardIds;
 
   if (activeStrip !== null && activeStrip < comboStrips.length) {
-    // Play the selected combo strip
     cardIds = comboStrips[activeStrip].cardIds;
   } else if (selectedCards.size > 0) {
     cardIds = Array.from(selectedCards);
@@ -69,7 +68,6 @@ async function playCards() {
   gameState = await r.json();
   selectedCards.clear();
   activeStrip = null;
-  // Remove played cards from strips
   if (cardIds) {
     const playedSet = new Set(cardIds);
     comboStrips = comboStrips.filter(s => {
@@ -77,6 +75,8 @@ async function playCards() {
       return s.cardIds.length > 0;
     });
   }
+  // Auto-close suggestion panel after playing
+  document.getElementById('suggest-panel').style.display = 'none';
   render();
   if (debugMode) fetchDebug();
 }
@@ -87,6 +87,7 @@ async function passTurn() {
   gameState = await r.json();
   selectedCards.clear();
   activeStrip = null;
+  document.getElementById('suggest-panel').style.display = 'none';
   render();
   if (debugMode) fetchDebug();
 }
@@ -224,7 +225,13 @@ function render() {
   document.getElementById('btn-play').disabled = !myTurn || (selectedCards.size === 0 && activeStrip === null);
   document.getElementById('btn-pass').disabled = !myTurn || !gameState.can_pass;
   document.getElementById('btn-hint').disabled = !myTurn;
+  document.getElementById('btn-suggest').disabled = !myTurn;
   document.getElementById('btn-organize').disabled = selectedCards.size === 0;
+  // Auto-play button state
+  const autoBtn = document.getElementById('btn-auto-play');
+  const isAuto = gameState.auto_play;
+  autoBtn.textContent = isAuto ? '停止自动' : '自动对局';
+  autoBtn.style.background = isAuto ? '#c0392b' : '#555';
   document.getElementById('btn-new-round').style.display =
     (gameState.round_over && !gameState.game_over) ? 'inline-block' : 'none';
 
@@ -489,6 +496,19 @@ function renderAILog(data) {
     return;
   }
 
+  // Config summary line
+  let configLine = '';
+  if (currentConfig) {
+    const labels = {heuristic:'启发式', monte_carlo:'蒙特卡洛', random:'随机'};
+    configLine = '<div style="font-size:0.75em;color:#888;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #333">全局: ' +
+      (labels[currentConfig.global_model] || currentConfig.global_model);
+    for (const p of [1,2,3]) {
+      const pc = (currentConfig.players || {})[p] || {};
+      if (pc.model) configLine += ' | ' + ['','右','对','左'][p] + '家: ' + (labels[pc.model]||pc.model);
+    }
+    configLine += '</div>';
+  }
+
   // Group entries by decision cycle
   let html = '';
   let currentCycle = null;
@@ -550,8 +570,329 @@ function renderAILog(data) {
   }
   if (currentCycle) html += '</div>';
 
-  container.innerHTML = html;
+  container.innerHTML = configLine + html;
   container.scrollTop = container.scrollHeight;
+}
+
+// ==================================================================
+// Auto-play toggle
+// ==================================================================
+
+async function toggleAutoPlay() {
+  const btn = document.getElementById('btn-auto-play');
+  const isAuto = btn.textContent.includes('停止');
+  const r = await fetch('/api/auto_play', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: !isAuto}),
+  });
+  const d = await r.json();
+  btn.textContent = d.auto_play ? '停止自动' : '自动对局';
+  btn.style.background = d.auto_play ? '#c0392b' : '#555';
+  if (d.auto_play) {
+    selectedCards.clear();
+    activeStrip = null;
+    fetchState();  // will start auto-play polling
+  }
+}
+
+// ==================================================================
+// AI Suggestion (semi-auto human assist)
+// ==================================================================
+
+async function aiSuggest() {
+  if (!myTurn || !gameState) return;
+  const panel = document.getElementById('suggest-panel');
+  const content = document.getElementById('suggest-content');
+  panel.style.display = 'block';
+  content.innerHTML = '<span style="color:#aaa">AI 正在分析...</span>';
+
+  const r = await fetch('/api/suggest');
+  const d = await r.json();
+  if (!d.candidates || d.candidates.length === 0) {
+    const canPass = gameState && gameState.can_pass;
+    content.innerHTML = '<span style="color:#e67e22">' +
+      (canPass ? '手牌中没有任何能压过牌桌的牌型，建议过牌' : '你是首家，但AI未找到合适的出牌建议') +
+      '</span>';
+    return;
+  }
+
+  let html = '<table style="width:100%;font-size:0.82em;border-collapse:collapse">';
+  html += '<tr style="color:#999"><th>牌型</th><th>牌面</th><th style="text-align:right">胜率</th><th></th></tr>';
+  let bestRate = d.candidates[0]?.win_rate || 0;
+  for (const c of d.candidates.slice(0, 8)) {
+    const isBest = c.win_rate === bestRate;
+    const bg = isBest ? 'background:rgba(39,174,96,0.15)' : '';
+    const color = isBest ? 'color:#27ae60' : 'color:#ccc';
+    const rate = (c.win_rate * 100).toFixed(1) + '%';
+    const cards = (c.cards || []).join(' ');
+    html += `<tr style="${bg};${color};border-bottom:1px solid rgba(255,255,255,0.04)">
+      <td>${c.type||'?'}</td><td>${cards}</td><td style="text-align:right;font-weight:bold">${rate}</td>
+      <td style="white-space:nowrap;padding-left:12px">
+        <button onclick="selectSuggested('${(c.cards||[]).join(',')}', this)" style="background:#555;color:#ccc;border:none;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:0.7em">选中</button>
+        <button onclick="playSuggested('${(c.cards||[]).join(',')}')" style="background:#27ae60;color:#fff;border:none;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:0.75em;margin-left:2px">出牌</button>
+      </td>
+    </tr>`;
+  }
+  html += '</table>';
+  content.innerHTML = html;
+}
+
+function selectSuggested(displayStrs, btnEl) {
+  const displays = displayStrs.split(',');
+  const hand = gameState.my_hand;
+  const neededIds = [];
+  const usedIds = new Set();
+  for (const d of displays) {
+    const card = hand.find(c => c.display === d.trim() && !usedIds.has(c.id));
+    if (card) { neededIds.push(card.id); usedIds.add(card.id); }
+  }
+  const allSelected = neededIds.length > 0 && neededIds.every(id => selectedCards.has(id));
+  if (allSelected) {
+    neededIds.forEach(id => selectedCards.delete(id));
+    if (btnEl) btnEl.textContent = '选中';
+  } else {
+    selectedCards.clear();
+    neededIds.forEach(id => selectedCards.add(id));
+    if (btnEl) btnEl.textContent = '取消';
+  }
+  render();
+}
+
+async function playSuggested(displayStrs) {
+  // Always select these cards (don't toggle), then play
+  const displays = displayStrs.split(',');
+  selectedCards.clear();
+  const hand = gameState.my_hand;
+  const usedIds = new Set();
+  for (const d of displays) {
+    const card = hand.find(c => c.display === d.trim() && !usedIds.has(c.id));
+    if (card) { selectedCards.add(card.id); usedIds.add(card.id); }
+  }
+  if (selectedCards.size > 0) {
+    await playCards();
+  }
+}
+
+// ==================================================================
+// AI Evaluate (analyze currently selected cards)
+// ==================================================================
+
+async function aiEvaluate() {
+  const panel = document.getElementById('suggest-panel');
+  const content = document.getElementById('suggest-content');
+  panel.style.display = 'block';
+
+  const cardIds = selectedCards ? Array.from(selectedCards) : [];
+  content.innerHTML = '<span style="color:#aaa">AI 分析中...</span>';
+
+  const r = await fetch('/api/evaluate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({card_ids: cardIds}),
+  });
+  const d = await r.json();
+
+  if (d.info) {
+    content.innerHTML = `<span style="color:#daa520">${d.info}</span>`;
+    return;
+  }
+  if (d.error) {
+    content.innerHTML = `<span style="color:#e74c3c">${d.error}</span>`;
+    return;
+  }
+
+  const rateStr = d.win_rate != null ? ` | 胜率: <b style="color:#27ae60">${(d.win_rate*100).toFixed(1)}%</b>` : '';
+  const rDiff = d.rounds_before - d.rounds_after;
+  content.innerHTML = `
+    <div style="font-size:0.85em">
+      <span style="color:#daa520">${d.combo_type}</span>
+      <span> ${(d.cards||[]).join(' ')}</span>
+      ${d.is_bomb ? '<span style="color:#e74c3c"> 炸弹</span>' : ''}
+    </div>
+    <div style="font-size:0.78em;color:#aaa;margin-top:4px">
+      轮次: ${d.rounds_before} → ${d.rounds_after} (${rDiff>=0?'-'+rDiff:'+'+Math.abs(rDiff)}轮)${rateStr}
+    </div>`;
+}
+
+// ==================================================================
+// AI Config Panel
+// ==================================================================
+
+let configOpen = false;
+let availableModels = [];
+let modelDefaults = {};
+let currentConfig = {};
+let configTab = 'global';
+
+function switchConfigTab(tab) {
+  configTab = tab;
+  document.querySelectorAll('.cfg-tab').forEach(b => b.classList.remove('active'));
+  const tabBtn = document.getElementById('cfg-tab-' + tab);
+  if (tabBtn) tabBtn.classList.add('active');
+  ['global','p0','p1','p2','p3'].forEach(t => {
+    const el = document.getElementById('cfg-tabcontent-' + t);
+    if (el) el.style.display = t === tab ? 'block' : 'none';
+  });
+}
+
+async function toggleConfig() {
+  configOpen = !configOpen;
+  const panel = document.getElementById('config-panel');
+  panel.style.display = configOpen ? 'block' : 'none';
+  if (configOpen) { await fetchConfig(); switchConfigTab('global'); }
+}
+
+async function fetchConfig() {
+  const r = await fetch('/api/config');
+  const d = await r.json();
+  availableModels = d.available_models || [];
+  modelDefaults = d.model_defaults || {};
+  currentConfig = d.config || {};
+
+
+  // Build tab content for global and each player
+  buildConfigTab('global', '全局', currentConfig.global_model, null);
+  for (const p of [0,1,2,3]) {
+    const pc = currentConfig.players[p] || {};
+    const playerNames = ['你', '右家', '对家', '左家'];
+    buildConfigTab('p' + p, playerNames[p], pc.model || currentConfig.global_model, p);
+  }
+}
+
+function buildConfigTab(tabId, title, model, playerId) {
+  const container = document.getElementById('cfg-tabcontent-' + tabId);
+  if (!container) return;
+  const isGlobal = playerId === null;
+  const labels = {heuristic:'启发式', monte_carlo:'蒙特卡洛', random:'随机'};
+  const modelOpts = availableModels.map(m =>
+    `<option value="${m}" ${model===m?'selected':''}>${labels[m]||m}</option>`
+  ).join('');
+
+  const selId = isGlobal ? 'cfg-global-model' : ('cfg-pmodel-' + playerId);
+  const prefix = isGlobal ? 'g' : ('p' + playerId);
+  const enabledId = isGlobal ? null : ('cfg-penabled-' + playerId);
+  const isEnabled = isGlobal ? true : !!(currentConfig.players[playerId] || {}).model;
+
+  const special = ['num_samples', 'time_limit_ms'];
+  // Merge: current config values override defaults
+  const defaults = modelDefaults[model] || {};
+  const currentParams = isGlobal
+    ? (currentConfig.global_params || {})[model] || {}
+    : (currentConfig.players[playerId] || {}).params || {};
+  const params = {...defaults, ...currentParams};
+  const specialLabels = {num_samples:'采样次数', time_limit_ms:'时限(ms)'};
+
+  let specialHtml = '';
+  for (const [k, v] of Object.entries(params)) {
+    if (!special.includes(k)) continue;
+    specialHtml += `<span style="margin-right:12px;color:#daa520">${specialLabels[k]||k}:
+      <input type="number" value="${v}" id="cfg-${prefix}param-${k}" style="width:60px;background:#222;color:#ddd;border:1px solid #555;border-radius:4px;padding:3px 6px;font-size:0.9em"></span>`;
+  }
+
+  const weightLabels = {
+    efficiency_weight:'出牌效率', round_weight:'轮次奖励', bomb_lead_penalty:'首出炸弹罚',
+    bomb_overuse_penalty:'炸弹压非炸弹罚', bomb_vs_bomb_bonus:'炸弹对炸弹奖', lead_bonus:'首家奖励',
+    follow_bonus:'跟牌奖励', joker_lead_penalty:'王先出罚', high_rank_lead_penalty:'K+先出罚',
+    card_usage_weight:'每张牌奖励', pass_threshold:'过牌阈值', sim_pass_prob:'模拟过牌率'
+  };
+  let weightHtml = '';
+  for (const [k, v] of Object.entries(params)) {
+    if (special.includes(k)) continue;
+    const label = weightLabels[k] || k;
+    weightHtml += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+      <span style="width:110px;text-align:right;font-size:0.85em">${label}</span>
+      <input type="number" value="${v}" step="0.5" id="cfg-${prefix}param-${k}" style="width:56px;background:#222;color:#ccc;border:1px solid #444;border-radius:4px;padding:2px 5px;font-size:0.85em">
+    </div>`;
+  }
+
+  const enabledCheckbox = !isGlobal ? `
+    <label style="color:#aaa;font-size:0.85em;margin-right:10px;cursor:pointer">
+      <input type="checkbox" id="${enabledId}" ${isEnabled?'checked':''} onchange="onPlayerEnabledChange(${playerId})"> 启用独立配置
+    </label>` : '';
+
+  container.innerHTML = `
+    ${enabledCheckbox}
+    <div style="margin-bottom:8px">
+      <span style="color:#aaa;margin-right:8px">模型:</span>
+      <select id="${selId}" onchange="onTabModelChange('${tabId}',${playerId})" style="background:#222;color:#ddd;border:1px solid #444;padding:4px 10px;border-radius:4px;font-size:0.9em">
+        ${isGlobal ? '' : '<option value="">(全局)</option>'}
+        ${modelOpts}
+      </select>
+      ${specialHtml}
+    </div>
+    <div style="color:#aaa;font-size:0.85em">${weightHtml}</div>`;
+}
+
+function onPlayerEnabledChange(playerId) {
+  const cb = document.getElementById('cfg-penabled-' + playerId);
+  const sel = document.getElementById('cfg-pmodel-' + playerId);
+  if (!cb || !sel) return;
+  if (!cb.checked) {
+    sel.value = '';
+    onTabModelChange('p' + playerId, playerId);
+  }
+}
+
+function onTabModelChange(tabId, playerId) {
+  const isGlobal = playerId === null;
+  const selId = isGlobal ? 'cfg-global-model' : ('cfg-pmodel-' + playerId);
+  const model = document.getElementById(selId).value;
+  const playerNames = ['你', '右家', '对家', '左家'];
+  const title = isGlobal ? '全局' : playerNames[playerId];
+  buildConfigTab(tabId, title, model, playerId);
+}
+
+async function applyConfig() {
+  const data = {
+    global_model: document.getElementById('cfg-global-model').value,
+    global_params: {},
+    players: {},
+  };
+
+  const gModel = data.global_model;
+  const gDefaults = modelDefaults[gModel] || {};
+  data.global_params[gModel] = {};
+  for (const k of Object.keys(gDefaults)) {
+    const el = document.getElementById('cfg-gparam-' + k);
+    if (el) data.global_params[gModel][k] = parseFloat(el.value) ?? gDefaults[k];
+  }
+
+  for (const p of [0,1,2,3]) {
+    const enabledCb = document.getElementById('cfg-penabled-' + p);
+    const enabled = enabledCb ? enabledCb.checked : false;
+    if (!enabled) {
+      data.players[p] = { model: null, params: null };
+      continue;
+    }
+    const psel = document.getElementById('cfg-pmodel-' + p);
+    const pmodel = psel ? psel.value : '';
+    if (pmodel) {
+      data.players[p] = { model: pmodel, params: {} };
+      const pDefaults = modelDefaults[pmodel] || {};
+      for (const k of Object.keys(pDefaults)) {
+        const el = document.getElementById('cfg-p' + p + 'param-' + k);
+        if (el) data.players[p].params[k] = parseFloat(el.value) ?? pDefaults[k];
+      }
+    } else {
+      data.players[p] = { model: null, params: null };
+    }
+  }
+
+  const r = await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  const result = await r.json();
+  // Show brief confirmation
+  const msg = document.getElementById('message');
+  msg.textContent = 'AI设置已保存';
+  msg.style.color = '#27ae60';
+  setTimeout(() => { msg.textContent = ''; msg.style.color = ''; }, 1500);
+  // Refresh config display
+  await fetchConfig();
+  // Don't toggle — keep panel open so user sees the change
 }
 
 // Initial load

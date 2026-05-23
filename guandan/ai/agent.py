@@ -29,6 +29,7 @@ from .scorer import choose_best_play, score_play
 from .opponent import CardCounter
 from .logger import ai_log
 from .player_view import PlayerView
+from .params import AIParams, DEFAULT_PARAMS
 
 
 # ==================================================================
@@ -109,11 +110,10 @@ def _generate_lead_candidates(finder: ComboFinder, hand: Tuple[Card, ...]) -> Li
 
 
 class HeuristicAgent(BaseAgent):
-    """Picks the play with the best immediate heuristic score.
+    """Picks the play with the best immediate heuristic score."""
 
-    Uses fast candidate generation (pick_lead / pick_response) to avoid
-    expensive full enumeration of 27-card hands.
-    """
+    def __init__(self, params: AIParams = DEFAULT_PARAMS, **kw):
+        self.params = params
 
     def choose_play(self, view: PlayerView) -> List[Card]:
         t0 = time.time()
@@ -145,7 +145,7 @@ class HeuristicAgent(BaseAgent):
         for c in candidates:
             used_ids = {x.id for x in c.cards}
             hand_after = tuple(x for x in hand if x.id not in used_ids)
-            s = score_play(c, hand, hand_after, table.current_combo, level)
+            s = score_play(c, hand, hand_after, table.current_combo, level, self.params)
             scored.append((c, s))
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -162,7 +162,7 @@ class HeuristicAgent(BaseAgent):
             for c, s in scored[:15]
         ])
 
-        best = choose_best_play(candidates, hand, table.current_combo, level, can_pass)
+        best = choose_best_play(candidates, hand, table.current_combo, level, can_pass, self.params)
 
         elapsed = (time.time() - t0) * 1000
         ai_log(pid, "decision_end",
@@ -179,28 +179,62 @@ class HeuristicAgent(BaseAgent):
 # ==================================================================
 
 class _FastSimAgent(BaseAgent):
-    """Fast heuristic agent for Monte Carlo rollouts."""
+    """Fast agent for Monte Carlo rollouts — uses params but skips estimate_rounds()."""
+
+    def __init__(self, params: AIParams = DEFAULT_PARAMS):
+        self.params = params
 
     def choose_play(self, view: PlayerView) -> List[Card]:
         hand = view.my_hand
         table = view.table
         pid = view.player_id
-        finder = ComboFinder(hand, view.level)
+        level = view.level
+        p = self.params
+        finder = ComboFinder(hand, level)
 
         if table.is_empty or table.last_played_player == pid:
-            combo = finder.pick_lead()
+            candidates = _generate_lead_candidates(finder, hand)
+            table_combo = None
         else:
+            candidates = []
             combo = finder.pick_response(table.current_combo)
-            if combo and random.random() < 0.15:
-                return []
-            if not combo:
-                bomb = finder._find_any_bomb()
-                if bomb and random.random() < 0.3:
-                    return list(bomb.cards)
-                return []
+            if combo: candidates.append(combo)
+            bomb = finder._find_any_bomb()
+            if bomb and bomb not in candidates:
+                candidates.append(bomb)
+            table_combo = table.current_combo
 
-        if combo:
-            return list(combo.cards)
+        can_pass = (table_combo is not None and table.last_played_player != pid)
+
+        best = None
+        best_score = float('-inf')
+        total = len(hand)
+
+        for c in candidates:
+            eff = (c.length / total) * p.efficiency_weight if total > 0 else 0
+            bomb_pen = 0.0
+            if c.is_bomb:
+                if table_combo is None:
+                    bomb_pen = p.bomb_lead_penalty
+                elif not table_combo.is_bomb:
+                    bomb_pen = p.bomb_overuse_penalty
+                else:
+                    bomb_pen = p.bomb_vs_bomb_bonus
+            usage = c.length * p.card_usage_weight
+            pos = p.lead_bonus if table_combo is None else (p.follow_bonus if not c.is_bomb else 0)
+            s = eff + bomb_pen + usage + pos
+            if s > best_score:
+                best_score = s
+                best = c
+
+        if best is not None and best_score >= p.pass_threshold:
+            return list(best.cards)
+        if can_pass and random.random() > p.sim_pass_prob:
+            return []
+        if best is not None:
+            return list(best.cards)
+        if hand:
+            return [hand[0]]
         return []
 
 
@@ -220,9 +254,11 @@ class MonteCarloAgent(BaseAgent):
       3. Pick the candidate with highest win rate
     """
 
-    def __init__(self, num_samples: int = 50, time_limit_ms: float = 3000):
+    def __init__(self, num_samples: int = 50, time_limit_ms: float = 3000,
+                 params: AIParams = DEFAULT_PARAMS):
         self.num_samples = num_samples
         self.time_limit_ms = time_limit_ms
+        self.params = params
 
     def choose_play(self, view: PlayerView) -> List[Card]:
         t_start = time.time()
@@ -340,9 +376,11 @@ class MonteCarloAgent(BaseAgent):
         if len(sim_state.finished_positions) >= 3:
             return self._did_i_win(sim_state, my_id)
 
-        # Collect all cards not in my hand, shuffle, re-deal to opponents
+        # Collect all cards not in my hand and not already played
         my_card_ids = {c.id for c in view.my_hand}
-        pool = [Card.from_id(i) for i in range(108) if i not in my_card_ids]
+        played_ids = {c.id for c in view.played_cards}
+        pool = [Card.from_id(i) for i in range(108)
+                if i not in my_card_ids and i not in played_ids]
         random.shuffle(pool)
         idx = 0
         for pid in range(4):
@@ -357,7 +395,7 @@ class MonteCarloAgent(BaseAgent):
 
         my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
 
-        # Simulate remainder using fast agents
+        # Simulate remainder using fast-but-smart agents
         agents = [_FastSimAgent() for _ in range(4)]
 
         for _ in range(200):  # safety limit
@@ -523,6 +561,9 @@ def _select_diverse_candidates(candidates: List[Combo], limit: int) -> List[Comb
 class RandomAgent(BaseAgent):
     """Random legal play — for testing."""
 
+    def __init__(self, params: AIParams = DEFAULT_PARAMS, **kw):
+        pass
+
     def choose_play(self, view: PlayerView) -> List[Card]:
         hand = view.my_hand
         table = view.table
@@ -545,6 +586,9 @@ class RandomAgent(BaseAgent):
 class FirstPlayAgent(BaseAgent):
     """Always plays first found legal combo — for testing."""
 
+    def __init__(self, params: AIParams = DEFAULT_PARAMS, **kw):
+        pass
+
     def choose_play(self, view: PlayerView) -> List[Card]:
         hand = view.my_hand
         table = view.table
@@ -562,6 +606,9 @@ class FirstPlayAgent(BaseAgent):
 
 class GreedyAgent(BaseAgent):
     """Plays the combo that uses the most cards."""
+
+    def __init__(self, params: AIParams = DEFAULT_PARAMS, **kw):
+        pass
 
     def choose_play(self, view: PlayerView) -> List[Card]:
         hand = view.my_hand

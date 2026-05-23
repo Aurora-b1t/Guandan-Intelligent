@@ -20,6 +20,7 @@
       <span class="badge team1">对方 Lv<strong id="info-team1">2</strong></span>
       <button id="btn-debug" onclick="toggleDebug()">隐藏牌面</button>
       <button id="btn-ai-debug" onclick="toggleAIDebug()">AI日志</button>
+      <button id="btn-config" onclick="toggleConfig()" style="background:#444;color:#fff">AI设置</button>
     </div>
   </div>
 
@@ -81,6 +82,45 @@
     </div>
   </div>
 
+  <!-- AI Config Sidebar -->
+  <div id="config-panel" style="display:none;position:fixed;top:0;left:0;bottom:0;width:380px;max-width:95vw;background:#1a1a2e;color:#ccc;z-index:200;overflow-y:auto;font-size:0.85em;border-right:2px solid #333;box-shadow:4px 0 20px rgba(0,0,0,0.5)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <h3 style="color:#daa520;font-size:1em;flex:1">AI 模型设置</h3>
+      <button id="btn-config-apply" onclick="applyConfig()" style="background:#27ae60;color:#fff;border:none;padding:4px 16px;border-radius:5px;cursor:pointer;font-size:0.9em">应用</button>
+      <button onclick="toggleConfig()" style="background:#555;color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer">X</button>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="cfg-tab active" onclick="switchConfigTab('global')" id="cfg-tab-global">全局</button>
+      <button class="cfg-tab" onclick="switchConfigTab('p0')" id="cfg-tab-p0">你</button>
+      <button class="cfg-tab" onclick="switchConfigTab('p1')" id="cfg-tab-p1">右家</button>
+      <button class="cfg-tab" onclick="switchConfigTab('p2')" id="cfg-tab-p2">对家</button>
+      <button class="cfg-tab" onclick="switchConfigTab('p3')" id="cfg-tab-p3">左家</button>
+    </div>
+
+    <!-- Tab contents: global + 4 players -->
+    <div id="cfg-tabcontent-global" style="max-height:340px;overflow-y:auto"></div>
+    <div id="cfg-tabcontent-p0" style="display:none;max-height:340px;overflow-y:auto"></div>
+    <div id="cfg-tabcontent-p1" style="display:none;max-height:340px;overflow-y:auto"></div>
+    <div id="cfg-tabcontent-p2" style="display:none;max-height:340px;overflow-y:auto"></div>
+    <div id="cfg-tabcontent-p3" style="display:none;max-height:340px;overflow-y:auto"></div>
+  </div>
+
+  <style>
+    .cfg-tab { background:#333; color:#999; border:none; padding:4px 14px; border-radius:5px 5px 0 0; cursor:pointer; font-size:0.85em }
+    .cfg-tab.active { background:#555; color:#fff }
+  </style>
+
+  <!-- Suggestion Panel -->
+  <div id="suggest-panel" style="display:none;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;margin:4px 0">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <span style="color:#daa520;font-size:0.85em;flex:1">AI 建议</span>
+      <button onclick="document.getElementById('suggest-panel').style.display='none'" style="background:#555;color:#fff;border:none;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:0.75em">关闭</button>
+    </div>
+    <div id="suggest-content" style="font-size:0.8em;max-height:200px;overflow-y:auto"></div>
+  </div>
+
   <!-- Controls -->
   <div id="controls">
     <div id="message"></div>
@@ -91,7 +131,17 @@
       <button id="btn-organize" onclick="organizeCombo()">组牌</button>
       <button id="btn-layout" onclick="toggleLayout()">横排</button>
       <button id="btn-new-round" onclick="newRound()" style="display:none">下一局</button>
-      <button id="btn-new-game" onclick="newGame()">新游戏</button>
+    </div>
+    <div id="buttons-ai" style="margin-top:4px;display:flex;align-items:center">
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:8px">
+        <button id="btn-suggest" onclick="aiSuggest()" style="background:#8e44ad">AI决策</button>
+        <button id="btn-evaluate" onclick="aiEvaluate()" style="background:#2c3e50">AI评估</button>
+        <button id="btn-auto-play" onclick="toggleAutoPlay()" style="background:#555">自动对局</button>
+      </div>
+      <div style="flex:1;display:flex;justify-content:flex-end">
+        <button id="btn-new-game" onclick="newGame()">新游戏</button>
+      </div>
     </div>
   </div>
 
