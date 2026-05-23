@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>掼蛋 Guandan</title>
+<style>
+  :root { --bg: #1a3a1a; --accent: #daa520; --text: #eee; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Microsoft YaHei", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+  }
+  .menu {
+    text-align: center;
+  }
+  .menu h1 { font-size: 3em; color: var(--accent); margin-bottom: 8px; }
+  .menu .subtitle { color: #888; margin-bottom: 40px; font-size: 1.1em; }
+  .menu-cards {
+    display: flex; gap: 24px; justify-content: center; flex-wrap: wrap;
+  }
+  .menu-card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px; padding: 32px 28px;
+    width: 280px; cursor: pointer;
+    transition: border-color 0.2s, transform 0.2s;
+    text-decoration: none; color: inherit; display: block;
+  }
+  .menu-card:hover {
+    border-color: var(--accent); transform: translateY(-4px);
+  }
+  .menu-card .icon { font-size: 3em; margin-bottom: 12px; }
+  .menu-card h2 { color: var(--accent); margin-bottom: 8px; }
+  .menu-card p { color: #999; font-size: 0.9em; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="menu">
+  <h1>掼蛋</h1>
+  <p class="subtitle">Guandan — Intelligent Analysis</p>
+  <div class="menu-cards">
+    <a href="/game" class="menu-card">
+      <div class="icon" style="font-size:2em">&#x1F0CF;</div>
+      <h2>四人対战</h2>
+      <p>人类 vs 3个AI 的完整掼蛋対局<br>含手牌管理、出牌记录、调试模式</p>
+    </a>
+    <a href="/arena" class="menu-card">
+      <div class="icon" style="font-size:2em">&#x1F9E0;</div>
+      <h2>AI 测试场</h2>
+      <p>自定义残局场景<br>观察AI决策过程：手牌评估、候选评分、最终选择</p>
+    </a>
+  </div>
+</div>
+</body>
+</html>

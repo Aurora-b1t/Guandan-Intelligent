@@ -39,6 +39,8 @@ class InteractiveGame:
         self._game_over = False
         self._winning_team: Optional[int] = None
         self._message = ""
+        # Step-by-step AI: each get_state() advances one AI turn
+        self._ai_running = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -51,9 +53,16 @@ class InteractiveGame:
         return self._start_round()
 
     def play_cards(self, card_ids: List[int]) -> dict:
-        """Human plays the given cards. Returns updated state."""
+        """Human plays the given cards. Returns updated state.
+
+        Applies the play synchronously, then spawns a background thread
+        for AI processing. Returns immediately with my_turn=False.
+        The frontend polls until my_turn becomes True.
+        """
         if self._game_over:
             return self._build_state()
+        if self._ai_running:
+            return self._build_state(error="AI思考中，请等待")
         if not self._is_human_turn():
             return self._build_state(error="现在不是你出牌")
 
@@ -66,9 +75,11 @@ class InteractiveGame:
         return self._process_human_play(cards)
 
     def pass_turn(self) -> dict:
-        """Human passes. Returns updated state."""
+        """Human passes. Returns updated state. Async AI processing."""
         if self._game_over:
             return self._build_state()
+        if self._ai_running:
+            return self._build_state(error="AI思考中，请等待")
         if not self._is_human_turn():
             return self._build_state(error="现在不是你出牌")
         if not self.rules.can_pass(self.state.table, self.HUMAN_ID):
@@ -77,18 +88,18 @@ class InteractiveGame:
         return self._process_human_pass()
 
     def get_state(self) -> dict:
-        """Return current game state for the frontend."""
+        """Return current game state. If AI is running, process one AI turn."""
+        if self._ai_running and self.state is not None:
+            self._step_one_ai()
         return self._build_state()
 
     def _is_human_turn(self) -> bool:
-        """Check if it's currently the human's turn.
-
-        After _auto_play_until_human() returns, the next active player
-        (tracked by state.current_player) is always the human.
-        """
+        """Check if it's currently the human's turn."""
         if self.state is None:
             return False
         if len(self.state.finished_positions) >= 3:
+            return False
+        if self._ai_running:
             return False
         next_player = self._next_active_player(self.state.current_player)
         return next_player == self.HUMAN_ID
@@ -120,9 +131,9 @@ class InteractiveGame:
 
         # If human is not the starter, auto-play until human's turn
         if starter != self.HUMAN_ID:
-            self._auto_play_until_human()
+            self._ai_running = True
 
-        self._message = "请出牌（你是首家）" if self._is_human_turn() else ""
+        self._message = "请出牌（你是首家）" if (starter == self.HUMAN_ID) else ""
         return self._build_state()
 
     # ------------------------------------------------------------------
@@ -130,7 +141,7 @@ class InteractiveGame:
     # ------------------------------------------------------------------
 
     def _process_human_play(self, cards: List[Card]) -> dict:
-        """Process human's play and auto-play AI turns."""
+        """Process human's play. AI turns will run step-by-step via get_state()."""
         result = self.rules.validate_play(
             cards=cards,
             hand=self.state.hands[self.HUMAN_ID],
@@ -147,76 +158,78 @@ class InteractiveGame:
         if self._check_round_end():
             return self._finish_round()
 
-        # Auto-play AI turns until human's turn or round end
-        self._auto_play_until_human()
-
-        if self._check_round_end():
-            return self._finish_round()
-
-        return self._build_state()
+        self._ai_running = True
+        return self._build_state(message="AI思考中...")
 
     def _process_human_pass(self) -> dict:
-        """Process human pass and auto-play AI turns."""
+        """Process human pass. AI turns will run step-by-step via get_state()."""
         self.state.table.record_pass(self.HUMAN_ID)
         self.state.current_player = (self.HUMAN_ID + 1) % 4
 
         if self._check_round_end():
             return self._finish_round()
 
-        self._auto_play_until_human()
+        self._ai_running = True
+        return self._build_state(message="AI思考中...")
 
-        if self._check_round_end():
-            return self._finish_round()
+    def _step_one_ai(self):
+        """Process exactly one AI turn. Called from get_state() while _ai_running."""
+        if not self._ai_running:
+            return
+        if self.state is None:
+            self._ai_running = False
+            return
+        if len(self.state.finished_positions) >= 3:
+            self._ai_running = False
+            return
 
-        return self._build_state()
+        table = self.state.table
+
+        # Check if trick ended
+        if table.last_played_player >= 0:
+            other_active = [p for p in self.state.active_players
+                            if p != table.last_played_player]
+            if table.pass_count >= len(other_active):
+                self.state.current_player = table.last_played_player
+                self._start_new_trick()
+                # If new leader is human, AI is done
+                if self.state.current_player == self.HUMAN_ID:
+                    self._ai_running = False
+                    return
+                # Otherwise AI leads next — process below
+
+        # Get next player to act
+        current = self._next_active_player(self.state.current_player)
+
+        if current == self.HUMAN_ID:
+            self.state.current_player = current
+            self._ai_running = False
+            return
+
+        # Process this AI's turn
+        self._ai_play(current)
+
+        if len(self.state.finished_positions) >= 3:
+            self._ai_running = False
+            return
+
+        # After AI plays, check if the next player is human
+        # (will be checked on the NEXT get_state call)
 
     # ------------------------------------------------------------------
     # Auto-play AI turns
     # ------------------------------------------------------------------
 
-    def _auto_play_until_human(self):
-        """Auto-play AI turns until it's the human's turn or the round ends."""
-        max_iters = 500
-        for _ in range(max_iters):
-            if self.state is None:
-                return
-            if len(self.state.finished_positions) >= 3:
-                return
-
-            # Determine whose turn it is
-            table = self.state.table
-
-            # If trick ended, start a new one
-            if table.last_played_player >= 0:
-                other_active = [p for p in self.state.active_players
-                                if p != table.last_played_player]
-                if table.pass_count >= len(other_active):
-                    # Trick ends
-                    self.state.current_player = table.last_played_player
-                    self._start_new_trick()
-                    if self.state.current_player == self.HUMAN_ID:
-                        return
-                    continue
-
-            # Get current player
-            current = self._next_active_player(self.state.current_player)
-
-            if current == self.HUMAN_ID:
-                self.state.current_player = current
-                return
-
-            # Have AI play
-            self._ai_play(current)
-
-            if len(self.state.finished_positions) >= 3:
-                return
-
     def _ai_play(self, player_id: int):
-        """Have an AI player make a move."""
-        from ..ai.agent import RandomAgent
-        agent = RandomAgent()
+        """Have an AI player make a move (with restricted view)."""
+        from ..ai.agent import HeuristicAgent
+        from ..ai.player_view import PlayerView
+        agent = HeuristicAgent()
         hand = self.state.hands[player_id]
-        play_cards = agent.choose_play(self.state, player_id)
+
+        # Give AI a restricted view — can't see other players' cards
+        view = PlayerView(self.state, player_id)
+        play_cards = agent.choose_play(view)
 
         result = self.rules.validate_play(
             cards=play_cards,
@@ -269,6 +282,32 @@ class InteractiveGame:
             from_player = (from_player + 1) % 4
         return from_player
 
+    def _mask_state_for_player(self, player_id: int) -> GameState:
+        """Return a copy of the state with opponent hands masked (empty tuples).
+
+        AI agents must not see other players' specific cards — only hand sizes.
+        """
+        masked_hands = []
+        for p in range(4):
+            if p == player_id:
+                masked_hands.append(self.state.hands[p])
+            else:
+                # Replace with empty tuple — AI only knows hand size via other means
+                masked_hands.append(tuple())
+        # Create a shallow copy with masked hands
+        from ..game_state import GameState as GS
+        from ..table import TableState
+        return GS(
+            level=self.state.level,
+            round_number=self.state.round_number,
+            hands=tuple(masked_hands),
+            played_cards=list(self.state.played_cards),
+            finished_positions=list(self.state.finished_positions),
+            current_player=self.state.current_player,
+            table=self.state.table,
+            trick_number=self.state.trick_number,
+        )
+
     def _check_round_end(self) -> bool:
         return self.state is not None and len(self.state.finished_positions) >= 3
 
@@ -296,7 +335,7 @@ class InteractiveGame:
     # State serialization
     # ------------------------------------------------------------------
 
-    def _build_state(self, error: str = "") -> dict:
+    def _build_state(self, error: str = "", message: str = "") -> dict:
         if self.state is None:
             return {
                 "my_hand": [],
@@ -308,7 +347,7 @@ class InteractiveGame:
                 "round": 0,
                 "trick": 0,
                 "finished_positions": [],
-                "message": error or "开始新游戏",
+                "message": error or message or "开始新游戏",
                 "error": bool(error),
                 "round_over": False,
                 "game_over": self._game_over,
@@ -354,8 +393,8 @@ class InteractiveGame:
         # Check if human can pass
         can_pass = self.rules.can_pass(self.state.table, self.HUMAN_ID) if self.rules else False
 
-        # Check if it's human's turn
-        my_turn = self._is_human_turn()
+        # Check if it's human's turn (AI must not be running)
+        my_turn = not self._ai_running and self._is_human_turn()
 
         # Finished positions (player IDs in order)
         finished_positions = [
@@ -365,17 +404,21 @@ class InteractiveGame:
 
         # Determine message
         if error:
-            message = error
+            msg = error
+        elif message:
+            msg = message
+        elif self._ai_running:
+            msg = "AI思考中..."
         elif self._message:
-            message = self._message
+            msg = self._message
             self._message = ""
         elif my_turn:
             if can_pass:
-                message = "请出牌或点「过」"
+                msg = "请出牌或点「过」"
             else:
-                message = "你是首家，请出牌"
+                msg = "你是首家，请出牌"
         else:
-            message = "等待AI出牌..."
+            msg = "等待AI出牌..."
 
         # Trick history (all plays/passes in the current trick)
         trick_history = []
@@ -413,7 +456,7 @@ class InteractiveGame:
             "round": self.round_number,
             "trick": self.state.trick_number,
             "finished_positions": finished_positions,
-            "message": message,
+            "message": msg,
             "error": bool(error),
             "round_over": len(self.state.finished_positions) >= 3,
             "game_over": self._game_over,
@@ -422,6 +465,8 @@ class InteractiveGame:
             "team_level_1": self.team_levels[1],
             "round_results": round_results,
             "trick_history": trick_history,
+            "ai_running": self._ai_running,
+            "ai_thinking_player": self.state.current_player if self._ai_running else -1,
         }
 
     def _card_json(self, card: Card) -> dict:

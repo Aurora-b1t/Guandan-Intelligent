@@ -313,6 +313,97 @@ button:disabled { opacity: 0.35; cursor: not-allowed; }
 }
 
 /* ==================================================================
+   AI DEBUG PANEL
+   ================================================================== */
+
+#ai-debug-panel {
+  display: none;
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 420px; max-width: 95vw;
+  background: #1a1a2e; color: #ccc;
+  z-index: 200;
+  overflow-y: auto;
+  font-size: 0.8em;
+  border-left: 2px solid #333;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+}
+#ai-debug-panel.show { display: flex; flex-direction: column; }
+#ai-debug-header {
+  position: sticky; top: 0; z-index: 5;
+  background: #16213e; padding: 8px 12px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid #333;
+}
+#ai-debug-header h3 { color: var(--accent); margin: 0; font-size: 0.95em; flex: 1; }
+#ai-debug-header button {
+  padding: 3px 10px; font-size: 0.75em;
+  background: #333; border: none; border-radius: 4px; color: #ccc; cursor: pointer;
+}
+#ai-debug-header button:hover { background: #555; }
+#ai-debug-content { padding: 8px; flex: 1; overflow-y: auto; }
+
+.ai-log-entry {
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;
+}
+.ai-log-entry .entry-header {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 4px;
+}
+.ai-log-entry .entry-player {
+  font-weight: bold; color: var(--accent); font-size: 0.8em;
+}
+.ai-log-entry .entry-type {
+  background: #333; padding: 1px 5px; border-radius: 3px; font-size: 0.7em;
+}
+.ai-log-entry .entry-time {
+  color: #666; font-size: 0.7em; margin-left: auto;
+}
+
+.ai-candidates-table {
+  width: 100%; border-collapse: collapse; margin: 4px 0;
+}
+.ai-candidates-table th, .ai-candidates-table td {
+  padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 0.75em;
+}
+.ai-candidates-table th { color: #888; font-weight: normal; }
+.ai-candidates-table .score-col { text-align: right; }
+.ai-candidates-table .best-row { color: #27ae60; font-weight: bold; }
+.ai-candidates-table .pass-row { color: #e67e22; }
+
+#btn-ai-debug {
+  background: #2c3e50; color: #ccc;
+  border: none; padding: 3px 10px; border-radius: 6px;
+  cursor: pointer; font-size: 0.75em;
+}
+#btn-ai-debug.active { background: #8e44ad; color: #fff; }
+
+/* AI thinking zone highlight */
+.player-zone.thinking-zone {
+  box-shadow: 0 0 16px rgba(218,165,32,0.5);
+  border-radius: 8px;
+}
+.player-zone.thinking-zone .zone-header .name {
+  color: var(--accent);
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* AI thinking spinner */
+#message.thinking::after {
+  content: ' ⏳';
+  animation: spin 1s infinite;
+}
+@keyframes spin {
+  0% { opacity: 1; }
+  50% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+/* ==================================================================
    RESPONSIVE
    ================================================================== */
 

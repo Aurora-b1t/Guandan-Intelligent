@@ -128,7 +128,9 @@ class Game:
             # Get agent's play
             agent = self.agents[current]
             hand = self.state.hands[current]
-            play_cards = agent.choose_play(self.state, current)
+            from .ai.player_view import PlayerView
+            view = PlayerView(self.state, current)
+            play_cards = agent.choose_play(view)
 
             # Validate
             result = self.rules.validate_play(

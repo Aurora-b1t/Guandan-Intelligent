@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 测试场 — 掼蛋</title>
+<style>
+  :root { --bg: #1a1a2e; --accent: #daa520; --text: #ddd; --card-bg: #fffef5; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "Microsoft YaHei", sans-serif; }
+  #app { max-width: 1100px; margin: 0 auto; padding: 12px 20px; }
+
+  .header { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .header h1 { color: var(--accent); font-size: 1.3em; }
+  .header a { color: #888; font-size: 0.85em; }
+
+  .panel { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+
+  /* Config row */
+  .config-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .config-row label { font-size: 0.85em; color: #aaa; }
+  .config-row input, .config-row select {
+    background: #222; color: #ddd; border: 1px solid #444;
+    padding: 4px 8px; border-radius: 4px; font-size: 0.85em;
+  }
+  .config-row button {
+    padding: 5px 14px; border: none; border-radius: 5px;
+    cursor: pointer; font-size: 0.85em; color: #fff;
+  }
+  .btn-primary { background: #27ae60; }
+  .btn-secondary { background: #555; }
+  .btn-warn { background: #c0392b; }
+
+  /* Cards display */
+  .card-row { display: flex; gap: 3px; flex-wrap: wrap; align-items: center; }
+  .card-mini {
+    display: inline-flex; flex-direction: column; align-items: center;
+    width: 42px; height: 58px; background: var(--card-bg);
+    border: 1px solid #c8b898; border-radius: 4px;
+    font-weight: bold; cursor: pointer; user-select: none;
+    position: relative; font-size: 0.7em;
+  }
+  .card-mini .rank { position: absolute; top: 1px; left: 3px; font-size: 0.85em; }
+  .card-mini .suit { font-size: 1.1em; }
+  .card-mini:hover { transform: translateY(-3px); box-shadow: 0 3px 10px rgba(0,0,0,0.3); }
+  .card-mini.selected { border-color: #f1c40f; box-shadow: 0 0 8px rgba(241,196,15,0.5); }
+  .card-mini.removed { opacity: 0.25; }
+  .suit-S { color: #2c3e50; } .suit-H { color: #c0392b; }
+  .suit-D { color: #2980b9; } .suit-C { color: #27ae60; }
+  .suit-NONE { color: #888; }
+  .joker-red { color: #c0392b; background: #fff0f0; }
+  .joker-black { color: #2c3e50; background: #f0f0f0; }
+  .wild { box-shadow: 0 0 5px #ff6b9d; border-color: #ff6b9d; }
+
+  /* Results table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  th { color: #999; font-weight: normal; font-size: 0.8em; }
+  .score-pos { color: #27ae60; } .score-neg { color: #e74c3c; }
+  .best-row { background: rgba(39,174,96,0.1); }
+  .best-row td { font-weight: bold; color: #27ae60; }
+
+  .section-title { font-size: 0.85em; color: var(--accent); margin-bottom: 6px; }
+
+  /* AI log entries */
+  .log-entry { font-size: 0.78em; color: #aaa; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .log-entry .label { color: #888; }
+
+  /* Preset buttons */
+  .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .preset-btn { padding: 3px 10px; font-size: 0.75em; border: 1px solid #555; border-radius: 4px; background: #333; color: #ccc; cursor: pointer; }
+  .preset-btn:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <h1>AI 测试场</h1>
+    <a href="/">← 主菜单</a> <a href="/game">対战</a>
+  </div>
+
+  <!-- Presets -->
+  <div class="panel">
+    <div class="section-title">预设场景</div>
+    <div class="preset-row">
+      <button class="preset-btn" onclick="loadPreset('bomb')">手牌含炸弹</button>
+      <button class="preset-btn" onclick="loadPreset('straight')">手牌含顺子</button>
+      <button class="preset-btn" onclick="loadPreset('scattered')">散牌开局</button>
+      <button class="preset-btn" onclick="loadPreset('endgame')">残局：大牌抉择</button>
+      <button class="preset-btn" onclick="loadPreset('jokers')">含王牌</button>
+      <button class="preset-btn" onclick="loadPreset('random')">随机手牌</button>
+    </div>
+  </div>
+
+  <!-- Configuration -->
+  <div class="panel">
+    <div class="section-title">场景配置</div>
+    <div class="config-row">
+      <label>等级:</label>
+      <input type="number" id="level" value="2" min="2" max="14" style="width:50px">
+      <label>情景:</label>
+      <select id="scenario"><option value="lead">首家出牌</option><option value="respond">跟牌</option></select>
+      <button class="btn-primary" onclick="analyze()">分析</button>
+      <button class="btn-secondary" onclick="addRandomCards()">随机加牌</button>
+      <button class="btn-warn" onclick="clearAll()">清空</button>
+    </div>
+  </div>
+
+  <!-- Hand + Table -->
+  <div class="panel">
+    <div class="section-title">手牌 <span id="hand-count" style="color:#888">(0张)</span></div>
+    <div class="card-row" id="hand-cards"></div>
+  </div>
+  <div class="panel" id="table-panel">
+    <div class="section-title">牌桌 <span id="table-count" style="color:#888">(空)</span></div>
+    <div class="card-row" id="table-cards"></div>
+  </div>
+
+  <!-- Explanation -->
+  <div class="panel" style="font-size:0.82em;color:#aaa;line-height:1.6">
+    <div class="section-title">评分逻辑</div>
+    <b>效率分</b> = 出牌张数/手牌张数 × 20 &nbsp;|&nbsp;
+    <b>结构分</b> = 出牌后手牌质量变化 &nbsp;|&nbsp;
+    <b>位置分</b> = 首家+1 / 跟牌+1.5 / 炸弹压非炸弹-3(好牌时)
+    <br>评分最高 = 最优选择（绿色行）。负分牌型通常不如过牌。
+  </div>
+
+  <!-- Results -->
+  <div class="panel" id="results-panel" style="display:none">
+    <div class="section-title">手牌评分: <span id="hand-score">-</span></div>
+    <table id="results-table">
+      <thead><tr><th>牌型</th><th>牌面</th><th>张数</th><th>主牌</th><th>炸弹</th><th>评分</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- AI Log -->
+  <div class="panel" id="log-panel" style="display:none">
+    <div class="section-title">AI 决策日志</div>
+    <div id="log-content"></div>
+  </div>
+</div>
+
+<script>
+let handCards = [];
+let tableCards = [];
+let selectedFor = 'hand'; // 'hand' or 'table'
+
+const SUIT_CHARS = {0:'♣',1:'♦',2:'♥',3:'♠',4:''};
+const SUIT_NAMES = {0:'C',1:'D',2:'H',3:'S',4:''};
+
+function cardHTML(c, id) {
+  const suitCls = c.is_joker ? (c.rank_name==='SJ'?'joker-black':'joker-red') : ('suit-'+SUIT_NAMES[c.suit]);
+  const wild = c.is_wild ? ' wild' : '';
+  return `<div class="card-mini ${suitCls}${wild}" data-id="${id}" onclick="toggleCard(${id})">
+    <span class="rank">${c.rank_name}</span><span class="suit">${SUIT_CHARS[c.suit]}</span>
+  </div>`;
+}
+
+async function loadPreset(name) {
+  if (name === 'random') {
+    const r = await fetch('/api/arena/random_hand', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:12})});
+    const d = await r.json();
+    handCards = d.hand_ids;
+    tableCards = [];
+    renderAll();
+    return;
+  }
+  // Hardcoded presets using card IDs
+  const presets = {
+    bomb: { hand: [0,54,13,67, 26,80, 1,55, 3,57], table: [], desc: '含炸弹的手牌' },
+    straight: { hand: [39,40,41,42,43, 10,64], table: [], desc: '含顺子的手牌' },
+    scattered: { hand: [0,13,26,39,1,14,27,40,2,15,28,41], table: [], desc: '散牌' },
+    endgame: { hand: [0,54,13,67, 39,40,41,42,43, 100,101], table: [5], desc: '残局：大牌vs炸弹' },
+    jokers: { hand: [52,53,106,107, 39,40,41,42,43], table: [], desc: '含四张王' },
+  };
+  const p = presets[name];
+  if (p) { handCards = p.hand || []; tableCards = p.table || []; renderAll(); }
+}
+
+async function addRandomCards() {
+  const r = await fetch('/api/arena/random_hand', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:5})});
+  const d = await r.json();
+  handCards = handCards.concat(d.hand_ids);
+  renderAll();
+}
+
+function clearAll() { handCards = []; tableCards = []; renderAll(); }
+
+function toggleCard(id) {
+  const inHand = handCards.includes(id);
+  const inTable = tableCards.includes(id);
+  if (inHand) { handCards = handCards.filter(x => x !== id); if (tableCards.length < 8) tableCards.push(id); }
+  else if (inTable) { tableCards = tableCards.filter(x => x !== id); handCards.push(id); }
+  renderAll();
+}
+
+async function analyze() {
+  const level = parseInt(document.getElementById('level').value) || 2;
+  const isLead = document.getElementById('scenario').value === 'lead';
+
+  const body = { hand: handCards, level, is_lead: isLead };
+  if (!isLead && tableCards.length > 0) body.table = tableCards;
+
+  const r = await fetch('/api/arena/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data = await r.json();
+
+  document.getElementById('results-panel').style.display = 'block';
+  document.getElementById('hand-score').textContent = data.hand_score;
+
+  const tbody = document.querySelector('#results-table tbody');
+  tbody.innerHTML = '';
+  let bestScore = data.candidates.length > 0 ? data.candidates[0].score : 0;
+  for (const c of data.candidates) {
+    const cls = c.score === bestScore ? 'best-row' : '';
+    const sc = c.score >= 0 ? 'score-pos' : 'score-neg';
+    tbody.innerHTML += `<tr class="${cls}">
+      <td>${c.type_cn||c.type}</td><td>${c.cards.join(' ')}</td><td>${c.length}</td>
+      <td>${c.main_rank}</td><td>${c.is_bomb?'💣':''}</td>
+      <td class="${sc}">${c.score}</td></tr>`;
+  }
+
+  // Log
+  document.getElementById('log-panel').style.display = 'block';
+  const logDiv = document.getElementById('log-content');
+  if (data.ai_log && data.ai_log.length > 0) {
+    logDiv.innerHTML = data.ai_log.map(e =>
+      `<div class="log-entry"><span class="label">[${e.type}]</span> ${JSON.stringify(e.data).substring(0,120)}</div>`
+    ).join('');
+  } else {
+    logDiv.innerHTML = '<div class="log-entry">无日志</div>';
+  }
+}
+
+function renderAll() {
+  renderCards('hand-cards', handCards);
+  renderCards('table-cards', tableCards);
+  document.getElementById('hand-count').textContent = `(${handCards.length}张)`;
+  document.getElementById('table-count').textContent = tableCards.length ? `(${tableCards.length}张)` : '(空)';
+}
+
+async function renderCards(containerId, ids) {
+  const container = document.getElementById(containerId);
+  // Fetch card info from server
+  if (ids.length === 0) { container.innerHTML = '<span style="color:#888;font-size:0.8em">点击手牌加入牌桌</span>'; return; }
+  // Build locally
+  const allCards = {};
+  for (let i = 0; i < 108; i++) {
+    const deck = Math.floor(i / 54);
+    const idx = i % 54;
+    let suit, rank, rankName;
+    if (idx < 52) {
+      suit = Math.floor(idx / 13);
+      const rv = (idx % 13) + 2;
+      rank = rv;
+      rankName = {2:'2',3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A'}[rv];
+    } else if (idx === 52) { suit=4; rank=15; rankName='SJ'; }
+    else { suit=4; rank=16; rankName='BJ'; }
+    allCards[i] = {
+      id: i, suit, rank, rank_name: rankName,
+      is_joker: rank >= 15, is_wild: (suit === 2 && rank === 2),
+      display: (['C','D','H','S',''][suit]||'') + rankName
+    };
+  }
+
+  container.innerHTML = ids.map(id => {
+    const c = allCards[id];
+    if (!c) return '';
+    return cardHTML(c, id);
+  }).join('');
+}
+
+// Initial load
+loadPreset('bomb');
+</script>
+</body>
+</html>

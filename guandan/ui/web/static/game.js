@@ -8,6 +8,8 @@ let activeStrip = null;              // index of selected combo strip (or null)
 let debugMode = true;                // default ON
 let flatLayout = false;              // false = vertical columns, true = horizontal
 let comboStrips = [];                // [{cardIds: [id,...]}, ...]
+let aiDebugOpen = false;             // AI debug panel
+let pollTimer = null;                // polling interval ID
 
 const SUIT_CHARS = {0: '♣', 1: '♦', 2: '♥', 3: '♠', 4: ''};
 const SUIT_NAMES = {0: 'C', 1: 'D', 2: 'H', 3: 'S', 4: ''};
@@ -22,6 +24,28 @@ async function fetchState() {
   gameState = await r.json();
   render();
   if (debugMode) fetchDebug();
+  if (aiDebugOpen) fetchAILog();
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    const r = await fetch('/api/state');
+    gameState = await r.json();
+    render();
+    if (debugMode) fetchDebug();
+    if (aiDebugOpen) fetchAILog();
+    if (gameState.my_turn || gameState.game_over || gameState.round_over) {
+      stopPolling();
+    }
+  }, 400);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
 
 async function playCards() {
@@ -188,6 +212,9 @@ function render() {
     ft.style.display = info.finished ? 'inline' : 'none';
     const zone = document.getElementById('zone-' + p);
     zone.classList.toggle('finished', info.finished);
+    // Highlight thinking AI
+    const thinking = gameState.ai_thinking_player;
+    zone.classList.toggle('thinking-zone', thinking >= 0 && thinking === p);
   }
 
   renderTrickHistory(gameState.trick_history || []);
@@ -204,6 +231,14 @@ function render() {
   const msgEl = document.getElementById('message');
   msgEl.textContent = gameState.message || '';
   msgEl.className = gameState.error ? 'error' : '';
+  if (gameState.message === 'AI思考中...' || gameState.ai_running) {
+    msgEl.classList.add('thinking');
+    document.getElementById('btn-play').disabled = true;
+    document.getElementById('btn-pass').disabled = true;
+    startPolling();
+  } else if (gameState.my_turn) {
+    stopPolling();
+  }
 
   renderHistory(gameState.round_results || []);
 }
@@ -416,6 +451,108 @@ document.addEventListener('keydown', (e) => {
     toggleDebug();
   }
 });
+
+// ==================================================================
+// AI Debug Panel
+// ==================================================================
+
+function toggleAIDebug() {
+  aiDebugOpen = !aiDebugOpen;
+  const panel = document.getElementById('ai-debug-panel');
+  const btn = document.getElementById('btn-ai-debug');
+  if (aiDebugOpen) {
+    panel.classList.add('show');
+    btn.classList.add('active');
+    fetchAILog();
+  } else {
+    panel.classList.remove('show');
+    btn.classList.remove('active');
+  }
+}
+
+async function fetchAILog() {
+  const r = await fetch('/api/ai_log');
+  const data = await r.json();
+  renderAILog(data);
+}
+
+async function clearAILog() {
+  await fetch('/api/ai_log/clear', {method: 'POST'});
+  document.getElementById('ai-debug-content').innerHTML =
+    '<div style="color:#888;padding:10px">日志已清空</div>';
+}
+
+function renderAILog(data) {
+  const container = document.getElementById('ai-debug-content');
+  if (!data || !data.entries || data.entries.length === 0) {
+    container.innerHTML = '<div style="color:#888;padding:10px">暂无AI决策记录</div>';
+    return;
+  }
+
+  // Group entries by decision cycle
+  let html = '';
+  let currentCycle = null;
+
+  for (const entry of data.entries) {
+    const playerName = ['你', '右AI', '对AI', '左AI'][entry.player] || 'P' + entry.player;
+
+    if (entry.type === 'decision_start') {
+      // Start a new decision block
+      if (currentCycle) html += '</div>';
+      html += '<div class="ai-log-entry">';
+      html += '<div class="entry-header">';
+      html += '<span class="entry-player">' + playerName + '</span>';
+      html += '<span class="entry-type">' + (entry.data.agent || 'Heuristic') + '</span>';
+      html += '<span class="entry-time">手牌' + (entry.data.hand_size || '?') + '张</span>';
+      html += '</div>';
+      currentCycle = entry;
+    } else if (entry.type === 'candidates') {
+      // Render candidate table
+      const candidates = entry.data.candidates || [];
+      if (candidates.length > 0) {
+        html += '<table class="ai-candidates-table">';
+        html += '<tr><th>牌型</th><th>牌</th><th>张数</th><th class="score-col">评分</th></tr>';
+        let bestScore = -Infinity;
+        for (const c of candidates) {
+          if (c.score > bestScore) bestScore = c.score;
+        }
+        for (const c of candidates) {
+          const isBest = c.score === bestScore;
+          const rowClass = isBest ? 'best-row' : '';
+          html += '<tr class="' + rowClass + '">';
+          html += '<td>' + c.type + '</td>';
+          html += '<td>' + (c.cards || []).join(' ') + '</td>';
+          html += '<td>' + c.length + '</td>';
+          html += '<td class="score-col">' + c.score.toFixed(1) + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+      }
+    } else if (entry.type === 'decision_end') {
+      const choice = entry.data.choice || '?';
+      const elapsed = entry.data.elapsed_ms || 0;
+      html += '<div style="font-size:0.75em;color:#aaa">';
+      html += '选择: <b style="color:#27ae60">' + choice + '</b>';
+      html += ' <span style="color:#666">(' + elapsed + 'ms)</span>';
+      html += '</div>';
+      if (entry.data.candidates_scored) {
+        html += '<table class="ai-candidates-table">';
+        html += '<tr><th>候选</th><th class="score-col">胜率</th></tr>';
+        for (const c of entry.data.candidates_scored) {
+          html += '<tr>';
+          html += '<td>' + (c.type || '?') + ' ' + (c.cards || []).join(' ') + '</td>';
+          html += '<td class="score-col">' + (c.win_rate * 100).toFixed(1) + '%</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+      }
+    }
+  }
+  if (currentCycle) html += '</div>';
+
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
 
 // Initial load
 fetchState();

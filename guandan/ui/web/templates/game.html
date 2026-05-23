@@ -19,6 +19,7 @@
       <span class="badge team0">我方 Lv<strong id="info-team0">2</strong></span>
       <span class="badge team1">对方 Lv<strong id="info-team1">2</strong></span>
       <button id="btn-debug" onclick="toggleDebug()">隐藏牌面</button>
+      <button id="btn-ai-debug" onclick="toggleAIDebug()">AI日志</button>
     </div>
   </div>
 
@@ -92,6 +93,16 @@
       <button id="btn-new-round" onclick="newRound()" style="display:none">下一局</button>
       <button id="btn-new-game" onclick="newGame()">新游戏</button>
     </div>
+  </div>
+
+  <!-- AI Debug Panel -->
+  <div id="ai-debug-panel">
+    <div id="ai-debug-header">
+      <h3>AI 决策日志</h3>
+      <button id="btn-ai-clear" onclick="clearAILog()">清空</button>
+      <button id="btn-ai-close-panel" onclick="toggleAIDebug()">关闭</button>
+    </div>
+    <div id="ai-debug-content"></div>
   </div>
 
   <!-- Scoreboard -->
