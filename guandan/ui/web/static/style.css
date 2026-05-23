@@ -1,0 +1,324 @@
+/* ================================================================
+   Guandan Web UI — Card Game Style
+   ================================================================ */
+
+:root {
+  --bg: #1a3a1a;
+  --table: #2d5a27;
+  --card-w: 56px;
+  --card-h: 78px;
+  --card-bg: #fffef5;
+  --card-border: #c8b898;
+  --suit-spade: #2c3e50;
+  --suit-heart: #c0392b;
+  --suit-diamond: #2980b9;
+  --suit-club: #27ae60;
+  --accent: #daa520;
+  --text: #eee;
+  --selected: #f1c40f;
+  --wild-glow: #ff6b9d;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 6px 12px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+#header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  flex-shrink: 0;
+}
+#header h1 { font-size: 1.4em; color: var(--accent); margin: 0; }
+#game-info { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.badge {
+  background: rgba(255,255,255,0.08);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 0.78em;
+}
+.badge.team0 { border: 1px solid #4ecdc4; }
+.badge.team1 { border: 1px solid #e74c3c; }
+#btn-debug {
+  background: #c0392b; color: #fff;
+  border: none; padding: 3px 10px; border-radius: 6px;
+  cursor: pointer; font-size: 0.75em;
+}
+#btn-debug.off { background: #555; color: #999; }
+
+/* ==================================================================
+   TABLE
+   ================================================================== */
+
+#table {
+  background: var(--table);
+  border-radius: 14px;
+  border: 3px solid #3d7a37;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* Player zones — absolute positioned in four corners */
+.player-zone {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.player-zone.you   { bottom: 8px; left: 50%; transform: translateX(-50%); width: 92%; }
+.player-zone.left  { left: 8px; top: 50%; transform: translateY(-50%); max-width: 170px; }
+.player-zone.right { right: 8px; top: 50%; transform: translateY(-50%); max-width: 170px; }
+.player-zone.partner { top: 8px; left: 50%; transform: translateX(-50%); width: 60%; }
+
+.zone-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8em; color: #bbb;
+}
+.zone-header .name { font-weight: bold; }
+.zone-header .name.you { color: var(--accent); }
+.zone-header .hand-size { color: var(--accent); font-weight: bold; }
+.zone-header .finished-tag {
+  color: var(--accent); font-size: 0.7em;
+  background: rgba(218,165,32,0.2); padding: 1px 6px; border-radius: 4px;
+}
+
+/* Play display zone */
+.play-display {
+  min-height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 2px; flex-wrap: wrap; padding: 2px 4px;
+}
+.play-display .pass-text { color: #888; font-size: 0.75em; font-style: italic; }
+.play-display .combo-tag {
+  background: var(--accent); color: #222;
+  padding: 1px 5px; border-radius: 3px; font-size: 0.65em; white-space: nowrap;
+}
+
+/* Debug hands shown inline in each zone */
+.debug-cards-inline {
+  display: flex; flex-wrap: wrap; gap: 1px;
+  justify-content: center; padding: 2px;
+  max-width: 100%;
+}
+
+/* Table center — hidden (info shown in player zones instead) */
+#table-center { display: none; }
+
+/* ==================================================================
+   CARD DESIGN
+   ================================================================== */
+
+.card {
+  display: inline-flex;
+  flex-direction: column; align-items: center; justify-content: center;
+  width: var(--card-w); height: var(--card-h);
+  background: var(--card-bg);
+  border: 2px solid var(--card-border);
+  border-radius: 6px;
+  cursor: pointer; user-select: none;
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+  position: relative;
+  flex-shrink: 0;
+}
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
+.card.selected {
+  transform: translateY(-14px);
+  border-color: var(--selected);
+  box-shadow: 0 6px 18px rgba(241,196,15,0.5);
+}
+.card .card-rank {
+  position: absolute; top: 3px; left: 5px;
+  font-size: 0.85em; font-weight: bold; line-height: 1;
+}
+.card .card-suit-big { font-size: 1.6em; line-height: 1; }
+
+/* Suit colors */
+.card.suit-S { color: var(--suit-spade); }
+.card.suit-H { color: var(--suit-heart); }
+.card.suit-D { color: var(--suit-diamond); }
+.card.suit-C { color: var(--suit-club); }
+.card.suit-NONE { color: #888; }
+.card.joker-red  { color: var(--suit-heart); background: #fff0f0; }
+.card.joker-black { color: var(--suit-spade); background: #f0f0f0; }
+.card.wild { box-shadow: 0 0 8px var(--wild-glow); border-color: #ff6b9d; }
+
+/* Small cards in play zones */
+.play-display .card,
+.debug-cards-inline .card,
+.combo-strip .card {
+  width: 40px; height: 56px; cursor: default; border-width: 1px;
+}
+.play-display .card .card-rank,
+.debug-cards-inline .card .card-rank,
+.combo-strip .card .card-rank { font-size: 0.65em; top: 1px; left: 2px; }
+.play-display .card .card-suit-big,
+.debug-cards-inline .card .card-suit-big,
+.combo-strip .card .card-suit-big { font-size: 1.1em; }
+.play-display .card:hover,
+.debug-cards-inline .card:hover,
+.combo-strip .card:hover { transform: none; box-shadow: none; }
+
+/* ==================================================================
+   HAND AREA — vertical columns + combo organizer
+   ================================================================== */
+
+#my-hand-area {
+  display: flex; gap: 8px;
+  padding: 18px 8px 4px 8px;  /* top padding gives room for selected cards to lift */
+  overflow-x: auto; overflow-y: hidden;
+  max-height: 230px;
+  align-items: flex-end;
+}
+#my-hand {
+  display: flex; gap: 2px;
+  align-items: flex-end;       /* bottom-aligned */
+  min-height: 90px;
+  padding: 4px 0;
+  flex-shrink: 0;
+}
+
+/* Rank column */
+.rank-column {
+  display: flex; flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  position: relative;
+}
+.rank-column .card {
+  margin-bottom: calc(-1 * var(--card-h) + 22px);
+}
+.rank-column .card:last-child {
+  margin-bottom: 0;
+}
+
+/* ==================================================================
+   COMBO ORGANIZER — vertical columns on the right
+   ================================================================== */
+
+#combo-strips {
+  display: flex; gap: 6px;
+  align-items: flex-end;
+  padding: 4px 0;
+  margin-left: auto;
+  min-height: 40px;
+  flex-shrink: 0;
+}
+.combo-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: center;
+  padding: 3px;
+  border: 2px dashed rgba(255,255,255,0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  min-height: 56px;
+  transition: border-color 0.15s;
+}
+/* Stack cards in a column strip — same overlap as hand columns */
+.combo-strip .card {
+  margin-bottom: calc(-1 * 40px + 10px);
+}
+.combo-strip .card:last-child {
+  margin-bottom: 0;
+}
+.combo-strip:hover { border-color: var(--accent); }
+.combo-strip.selected-strip { border-color: var(--selected); background: rgba(241,196,15,0.1); }
+.combo-strip .strip-close {
+  position: absolute; top: -8px; right: -8px;
+  width: 20px; height: 20px;
+  background: #c0392b; color: #fff;
+  border: 2px solid #fff; border-radius: 50%;
+  font-size: 12px; line-height: 16px; text-align: center;
+  padding: 0;
+  cursor: pointer; z-index: 5;
+  display: none;
+}
+.combo-strip:hover .strip-close { display: block; }
+
+/* ==================================================================
+   MODE TOGGLE (flat vs column hand layout)
+   ================================================================== */
+
+#my-hand.flat-layout {
+  flex-wrap: wrap; gap: 2px;
+}
+#my-hand.flat-layout .rank-column .card {
+  margin-bottom: 0;
+}
+
+/* ==================================================================
+   CONTROLS
+   ================================================================== */
+
+#controls {
+  flex-shrink: 0; text-align: center; padding: 4px 0;
+}
+#message { font-size: 0.9em; min-height: 20px; margin-bottom: 2px; }
+#message.error { color: #e74c3c; }
+#buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+button {
+  padding: 6px 20px; border: none; border-radius: 7px;
+  font-size: 0.9em; cursor: pointer; color: #fff; font-weight: bold;
+  transition: opacity 0.15s;
+}
+button:hover { opacity: 0.82; }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+#btn-play  { background: var(--suit-club); }
+#btn-pass  { background: #e67e22; }
+#btn-hint  { background: #8e44ad; }
+#btn-organize { background: #2c3e50; }
+#btn-layout { background: #555; }
+#btn-new-round { background: var(--suit-diamond); }
+#btn-new-game  { background: #555; }
+
+/* ==================================================================
+   SCOREBOARD
+   ================================================================== */
+
+#scoreboard {
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px; padding: 6px 10px; margin-top: 2px;
+}
+#scoreboard h3 { font-size: 0.75em; color: #888; margin-bottom: 4px; }
+#history {
+  font-size: 0.72em; color: #999; max-height: 50px; overflow-y: auto;
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+}
+
+/* ==================================================================
+   RESPONSIVE
+   ================================================================== */
+
+@media (max-width: 750px) {
+  :root { --card-w: 42px; --card-h: 58px; }
+  #table { border-radius: 8px; }
+  .player-zone.left, .player-zone.right { max-width: 90px; }
+  .rank-column .card { margin-bottom: calc(-1 * var(--card-h) + 16px); }
+}

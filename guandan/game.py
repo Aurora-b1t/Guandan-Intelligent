@@ -1,0 +1,203 @@
+"""Game orchestrator: manages rounds, tricks, and player turns."""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+from . import constants
+from .card import Card
+from .combo import Combo
+from .deck import Deck
+from .game_state import GameState
+from .rules import PlayLegality, RulesEngine, ValidationResult
+from .score import RoundResult, advance_level, calculate_result, is_game_won
+from .table import TableState
+
+
+@dataclass
+class GameResult:
+    """Final result of a complete game."""
+    winning_team: int
+    final_levels: Tuple[int, int]
+    rounds_played: int
+    round_results: List[RoundResult] = field(default_factory=list)
+
+
+class Game:
+    """Orchestrates a full Guandan game."""
+
+    MAX_TRICKS_PER_ROUND = 500
+    MAX_TRICK_ITERATIONS = 200
+
+    def __init__(self, agents: List, level: int = 2):
+        if len(agents) != 4:
+            raise ValueError(f"Need exactly 4 agents, got {len(agents)}")
+        self.agents = agents
+        self.rules = RulesEngine(level)
+        self.state: Optional[GameState] = None
+        self.team_levels = [level, level]  # [team_0, team_1]
+        self.round_results: List[RoundResult] = []
+        self.round_number = 0
+
+    def play_game(self) -> GameResult:
+        """Play until one team wins.
+
+        Win condition: win a round while your team's level is at A (14) or higher.
+        """
+        while True:
+            round_result = self._play_round()
+            self.round_results.append(round_result)
+
+            winning_team = round_result.winning_team
+
+            # Win: already at level A (or above) and won the round
+            if is_game_won(self.team_levels[winning_team]):
+                return GameResult(
+                    winning_team=winning_team,
+                    final_levels=(self.team_levels[0], self.team_levels[1]),
+                    rounds_played=self.round_number,
+                    round_results=self.round_results,
+                )
+
+            self.team_levels[winning_team] = advance_level(
+                self.team_levels[winning_team], round_result.level_change
+            )
+
+    def _play_round(self) -> RoundResult:
+        """Play one round (one hand)."""
+        self.round_number += 1
+        level = self.team_levels[0]  # Both teams share the current level for play
+        self.rules = RulesEngine(level)
+
+        # Deal
+        deck = Deck.shuffle(Deck.create())
+        hands = Deck.deal(deck)
+
+        # Determine starter: first round = random, subsequent = previous 头游
+        if self.round_number == 1:
+            starter = random.randint(0, 3)
+        else:
+            starter = self.round_results[-1].positions[0]
+
+        self.state = GameState(
+            level=level,
+            round_number=self.round_number,
+            hands=hands,
+            current_player=starter,
+            trick_number=0,
+        )
+
+        # Play tricks until 3 players empty their hands
+        round_iters = 0
+        while len(self.state.finished_positions) < 3:
+            self._play_trick()
+            round_iters += 1
+            if round_iters > self.MAX_TRICKS_PER_ROUND:
+                hands_left = {p: len(self.state.hands[p]) for p in self.state.active_players}
+                raise IllegalPlayError(
+                    f"Round exceeded 500 tricks! finished={self.state.finished_positions}, "
+                    f"hands={hands_left}",
+                    player_id=-1, reason=PlayLegality.INVALID_COMBO,
+                )
+
+        return calculate_result(self.state.finished_positions)
+
+    def _play_trick(self):
+        """Play one trick (一轮)."""
+        self.state.trick_number += 1
+        leader = self._current_active_player(self.state.current_player)
+        self.state.table.reset_for_new_trick(leader)
+        current = leader
+        _iter = 0
+
+        while _iter < self.MAX_TRICK_ITERATIONS:
+            _iter += 1
+            current = self._current_active_player(current)
+
+            # Check if trick should end: all other active players have passed
+            if self.state.table.last_played_player >= 0:
+                other_active = len([
+                    p for p in self.state.active_players
+                    if p != self.state.table.last_played_player
+                ])
+                if self.state.table.pass_count >= other_active:
+                    break
+
+            # Get agent's play
+            agent = self.agents[current]
+            hand = self.state.hands[current]
+            play_cards = agent.choose_play(self.state, current)
+
+            # Validate
+            result = self.rules.validate_play(
+                cards=play_cards,
+                hand=hand,
+                table_state=self.state.table,
+                player_id=current,
+                finished_positions=self.state.finished_positions,
+            )
+
+            if not result.is_legal:
+                raise IllegalPlayError(
+                    f"Player {current} illegal play: {result.reason}",
+                    player_id=current,
+                    reason=result.reason,
+                )
+
+            if play_cards:
+                # Play: update table and hand
+                combo = result.resolved_combo
+                self.state.table.record_play(current, combo)
+                # Remove cards from hand
+                played_ids = {c.id for c in play_cards}
+                new_hand = tuple(c for c in hand if c.id not in played_ids)
+                self.state.hands = tuple(
+                    new_hand if i == current else h
+                    for i, h in enumerate(self.state.hands)
+                )
+                self.state.played_cards.extend(play_cards)
+
+                # Check finish
+                if not new_hand:
+                    self.state.finished_positions.append(current)
+                    # If 3 players finished, trick ends
+                    if len(self.state.finished_positions) >= 3:
+                        break
+            else:
+                # Pass
+                self.state.table.record_pass(current)
+
+            # Next player (clockwise, skip finished)
+            current = (current + 1) % 4
+        else:
+            hands_info = [(p, len(self.state.hands[p])) for p in self.state.active_players]
+            raise IllegalPlayError(
+                f"Trick loop exceeded {self.MAX_TRICK_ITERATIONS} iters. Active: {hands_info}, "
+                f"finished: {self.state.finished_positions}, pass: {self.state.table.pass_count}, "
+                f"last_played: {self.state.table.last_played_player}",
+                player_id=-1,
+                reason=PlayLegality.INVALID_COMBO,
+            )
+
+        # Trick winner leads next
+        if self.state.table.last_played_player >= 0:
+            self.state.current_player = self.state.table.last_played_player
+
+    def _current_active_player(self, from_player: int) -> int:
+        """Find the next active player starting from `from_player` (inclusive)."""
+        for _ in range(4):
+            if from_player not in self.state.finished_positions:
+                return from_player
+            from_player = (from_player + 1) % 4
+        return from_player  # fallback
+
+
+class IllegalPlayError(Exception):
+    """Raised when an agent makes an illegal play."""
+
+    def __init__(self, message: str, player_id: int, reason: PlayLegality):
+        super().__init__(message)
+        self.player_id = player_id
+        self.reason = reason

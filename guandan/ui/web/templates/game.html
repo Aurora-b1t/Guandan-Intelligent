@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>掼蛋 Guandan</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- Header -->
+  <div id="header">
+    <h1>掼蛋</h1>
+    <div id="game-info">
+      <span class="badge">Lv <strong id="info-level">2</strong></span>
+      <span class="badge">局 <strong id="info-round">1</strong></span>
+      <span class="badge">轮 <strong id="info-trick">1</strong></span>
+      <span class="badge team0">我方 Lv<strong id="info-team0">2</strong></span>
+      <span class="badge team1">对方 Lv<strong id="info-team1">2</strong></span>
+      <button id="btn-debug" onclick="toggleDebug()">隐藏牌面</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div id="table">
+    <!-- Partner (top) -->
+    <div class="player-zone partner" id="zone-2">
+      <div class="zone-header">
+        <span class="name" id="name-2">对家</span>
+        <span class="hand-size" id="size-2">27</span>张
+        <span class="finished-tag" id="finish-2" style="display:none">已完成</span>
+      </div>
+      <div class="play-display" id="play-2"></div>
+      <div class="debug-cards-inline" id="debug-hand-2" style="display:none"></div>
+    </div>
+
+    <!-- Left player -->
+    <div class="player-zone left" id="zone-3">
+      <div class="zone-header">
+        <span class="name" id="name-3">左家</span>
+        <span class="hand-size" id="size-3">27</span>张
+        <span class="finished-tag" id="finish-3" style="display:none">已完成</span>
+      </div>
+      <div class="play-display" id="play-3"></div>
+      <div class="debug-cards-inline" id="debug-hand-3" style="display:none"></div>
+    </div>
+
+    <!-- Right player -->
+    <div class="player-zone right" id="zone-1">
+      <div class="zone-header">
+        <span class="name" id="name-1">右家</span>
+        <span class="hand-size" id="size-1">27</span>张
+        <span class="finished-tag" id="finish-1" style="display:none">已完成</span>
+      </div>
+      <div class="play-display" id="play-1"></div>
+      <div class="debug-cards-inline" id="debug-hand-1" style="display:none"></div>
+    </div>
+
+    <!-- Table center -->
+    <div id="table-center">
+      <div id="center-combo">
+        <span id="center-empty">等待出牌</span>
+      </div>
+      <div id="center-player"></div>
+    </div>
+
+    <!-- Human (bottom) -->
+    <div class="player-zone you" id="zone-0">
+      <div class="zone-header">
+        <span class="name you" id="name-0">你</span>
+        <span class="hand-size" id="size-0">27</span>张
+        <span class="finished-tag" id="finish-0" style="display:none">已完成</span>
+      </div>
+      <div class="play-display" id="play-0"></div>
+      <div id="my-hand-area">
+        <div id="my-hand"></div>
+        <div id="combo-strips"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls">
+    <div id="message"></div>
+    <div id="buttons">
+      <button id="btn-play" onclick="playCards()">出牌</button>
+      <button id="btn-pass" onclick="passTurn()">过</button>
+      <button id="btn-hint" onclick="showHint()">提示</button>
+      <button id="btn-organize" onclick="organizeCombo()">组牌</button>
+      <button id="btn-layout" onclick="toggleLayout()">横排</button>
+      <button id="btn-new-round" onclick="newRound()" style="display:none">下一局</button>
+      <button id="btn-new-game" onclick="newGame()">新游戏</button>
+    </div>
+  </div>
+
+  <!-- Scoreboard -->
+  <div id="scoreboard">
+    <h3>战绩</h3>
+    <div id="history"></div>
+  </div>
+</div>
+
+<script src="/static/game.js"></script>
+</body>
+</html>
