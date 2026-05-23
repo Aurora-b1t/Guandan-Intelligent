@@ -85,6 +85,13 @@ def api_pass():
     return jsonify(result)
 
 
+@app.route("/api/start_game", methods=["POST"])
+def api_start_game():
+    game = _get_game()
+    result = game.start_game()
+    return jsonify(result)
+
+
 @app.route("/api/new_game", methods=["POST"])
 def api_new_game():
     sid = uuid.uuid4().hex
@@ -189,9 +196,11 @@ def api_config():
 
 @app.route("/api/suggest")
 def api_suggest():
-    """AI suggestion for human player: return top candidates with scores."""
+    """AI suggestion: generate candidates from hand, MC score each, return ranked."""
     from ...ai.player_view import PlayerView
-    from ...ai.logger import AILogger
+    from ...ai.agent import MonteCarloAgent, _generate_lead_candidates
+    from ...combo_finder import ComboFinder
+    from ...combo_compare import can_beat
 
     game = _get_game()
     if game.state is None or not game._is_human_turn():
@@ -199,53 +208,56 @@ def api_suggest():
 
     pid = game.HUMAN_ID
     hand = game.state.hands[pid]
+    table = game.state.table
+    level = game.state.level
+    finder = ComboFinder(hand, level)
 
-    # Use Monte Carlo for deep analysis (more samples for suggestion)
-    from ...ai.agent import MonteCarloAgent
-    agent = MonteCarloAgent(num_samples=80, time_limit_ms=8000)
-    view = PlayerView(game.state, pid)
+    # Generate candidates directly from hand (not from log)
+    is_lead = table.is_empty or table.last_played_player == pid
+    table_combo = table.current_combo
 
-    AILogger.get().clear()
+    if is_lead:
+        candidates = _generate_lead_candidates(finder, hand)
+    else:
+        from ...ai.agent import _enumerate_responses
+        candidates = _enumerate_responses(hand, table_combo, finder, level)
 
-    # Get MC analysis
-    _ = agent.choose_play(view)
+    if not candidates:
+        return jsonify({"candidates": [], "message": "无候选"})
 
-    # Read the log and validate candidates
-    from ...combo_compare import can_beat
-    from ...combo_parser import ComboParser
-    parser = ComboParser(game.state.level)
-    log_entries = AILogger.get().get_recent(200)
-    candidates = []
-    seen = set()
-    for e in log_entries:
-        if e["type"] == "decision_end" and e["data"].get("candidates_scored"):
-            for c in e["data"]["candidates_scored"]:
-                cards_display = c.get("cards", [])
-                key = tuple(sorted(cards_display))
-                if key in seen:
-                    continue
-                seen.add(key)
-                # Validate: can this actually be played?
-                card_objs = [card for card in hand if card.display in cards_display]
-                if len(card_objs) != len(cards_display):
-                    continue  # cards not in hand
-                combo = parser.parse(card_objs)
-                if combo is None:
-                    continue  # invalid combo
-                if game.state.table.current_combo and not can_beat(combo, game.state.table.current_combo):
-                    continue  # doesn't beat table
-                candidates.append({
-                    "type": c.get("type", "?"),
-                    "cards": cards_display,
-                    "win_rate": c.get("win_rate", 0),
-                })
+    # Run MC to score OUR candidates directly (not MC's own)
+    can_pass = not is_lead
+    view = PlayerView(game.state, pid, game.action_log)
+    mc_agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)
+    scored = mc_agent.score_candidates(view, candidates, can_pass)
 
-    candidates.sort(key=lambda c: c.get("win_rate", 0), reverse=True)
+    # Build result from scored candidates (include PASS)
+    results = []
+    for c, wr in scored:
+        if c is None:
+            results.append({
+                "type": "PASS", "type_cn": "过牌",
+                "cards": [], "length": 0, "is_bomb": False,
+                "win_rate": wr,
+            })
+        else:
+            if not is_lead and not can_beat(c, table_combo):
+                continue
+            results.append({
+                "type": c.combo_type.name,
+                "type_cn": _COMBO_TYPE_CN.get(c.combo_type.value, c.combo_type.name),
+                "cards": [x.display for x in c.cards],
+                "length": c.length,
+                "is_bomb": c.is_bomb,
+                "win_rate": wr,
+            })
+
+    results.sort(key=lambda c: c.get("win_rate", 0), reverse=True)
 
     return jsonify({
-        "candidates": candidates,
+        "candidates": results,
         "hand_size": len(hand),
-        "message": f"分析了 {len(candidates)} 个候选",
+        "message": f"分析了 {len(results)} 个候选",
     })
 
 
@@ -254,9 +266,6 @@ def api_evaluate():
     """Evaluate selected cards using Monte Carlo simulation."""
     from ...combo_parser import ComboParser
     from ...combo_compare import can_beat
-    from ...ai.player_view import PlayerView
-    from ...ai.agent import MonteCarloAgent
-    from ...ai.logger import AILogger
 
     game = _get_game()
     if game.state is None:
@@ -296,20 +305,14 @@ def api_evaluate():
     if not is_lead and not can_beat(combo, table_combo):
         return jsonify({"error": "打不过牌桌上的牌型"})
 
-    # Run MC analysis for this specific play
-    AILogger.get().clear()
-    agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)
-    view = PlayerView(game.state, game.HUMAN_ID)
-    agent.choose_play(view)
+    # Run MC to score this specific play
+    from ...ai.player_view import PlayerView
+    from ...ai.agent import MonteCarloAgent
+    view = PlayerView(game.state, game.HUMAN_ID, game.action_log)
+    mc_agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)
+    scored = mc_agent.score_candidates(view, [combo], can_pass=False)
 
-    # Extract win rate for this specific candidate
-    log_entries = AILogger.get().get_recent(200)
-    win_rate = None
-    for e in log_entries:
-        if e["type"] == "decision_end" and e["data"].get("candidates_scored"):
-            for c in e["data"]["candidates_scored"]:
-                if set(c.get("cards", [])) == set(card.display for card in cards):
-                    win_rate = c.get("win_rate")
+    win_rate = scored[0][1] if scored else None
 
     from ...ai.hand_eval import estimate_rounds
     used_ids = {c.id for c in cards}

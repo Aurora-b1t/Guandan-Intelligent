@@ -43,6 +43,108 @@ class BaseAgent:
         raise NotImplementedError
 
 
+def _enumerate_responses(hand: Tuple[Card, ...], table_combo: Combo,
+                         finder: ComboFinder, level: int) -> List[Combo]:
+    """Enumerate ALL valid same-type responses + bomb option."""
+    from ..combo_parser import ComboParser
+    parser = ComboParser(level)
+    candidates = []
+    ct = table_combo.combo_type
+    wilds = [c for c in hand if c.is_wild(level)]
+    normals = [c for c in hand if not c.is_wild(level)]
+
+    if ct.name == 'SINGLE':
+        t_rank = table_combo.main_rank.value
+        for c in hand:
+            if c.rank.value > t_rank:
+                parsed = parser.parse([c])
+                if parsed: candidates.append(parsed)
+    elif ct.name == 'PAIR':
+        t_rank = table_combo.main_rank.value
+        by_rank: dict = {}
+        for c in hand: by_rank.setdefault(c.rank, []).append(c)
+        for rank, cards in by_rank.items():
+            if rank.value > t_rank and len(cards) >= 2:
+                parsed = parser.parse(list(cards[:2]))
+                if parsed: candidates.append(parsed)
+    elif ct.name == 'TRIPLE':
+        t_rank = table_combo.main_rank.value
+        by_rank: dict = {}
+        for c in hand: by_rank.setdefault(c.rank, []).append(c)
+        for rank, cards in by_rank.items():
+            if rank.value > t_rank and len(cards) >= 3:
+                parsed = parser.parse(list(cards[:3]))
+                if parsed: candidates.append(parsed)
+    elif ct.name in ('TRIPLE_SINGLE', 'TRIPLE_PAIR'):
+        side = 1 if ct.name == 'TRIPLE_SINGLE' else 2
+        t_rank = table_combo.main_rank.value
+        by_rank: dict = {}
+        for c in hand: by_rank.setdefault(c.rank, []).append(c)
+        for rank, cards in by_rank.items():
+            if rank.value > t_rank and len(cards) >= 3:
+                others = [c for r2, cs in by_rank.items() if r2 != rank for c in cs]
+                if len(others) >= side:
+                    parsed = parser.parse(list(cards[:3]) + others[:side])
+                    if parsed: candidates.append(parsed)
+    elif ct.name in ('STRAIGHT', 'STRAIGHT_FLUSH'):
+        length = table_combo.length
+        t_end = table_combo.main_rank.value
+        for end in range(t_end + 1, 15):
+            start = end - length + 1
+            if start < 3: continue
+            needed = 0; subset = []
+            for rv in range(start, end + 1):
+                matches = [c for c in normals if c.rank.value == rv]
+                if matches: subset.append(matches[0])
+                else: needed += 1
+            if needed == len(wilds) and len(subset) + needed == length:
+                parsed = parser.parse(subset + wilds)
+                if parsed: candidates.append(parsed)
+    elif ct.name == 'CONSECUTIVE_PAIRS':
+        num_pairs = table_combo.length // 2
+        t_end = table_combo.main_rank.value
+        by_rank: dict = {}
+        for c in normals: by_rank.setdefault(c.rank, []).append(c)
+        for end in range(t_end + 1, 15):
+            start = end - num_pairs + 1
+            if start < 3: continue
+            needed = 0; subset = []
+            for rv in range(start, end + 1):
+                cs = by_rank.get(Rank(rv), [])
+                available = min(len(cs), 2)
+                subset.extend(cs[:available])
+                needed += max(0, 2 - available)
+            if needed == len(wilds):
+                parsed = parser.parse(subset + wilds)
+                if parsed: candidates.append(parsed)
+    elif ct.name == 'CONSECUTIVE_TRIPLES':
+        num_triples = table_combo.length // 3
+        t_end = table_combo.main_rank.value
+        by_rank: dict = {}
+        for c in normals: by_rank.setdefault(c.rank, []).append(c)
+        for end in range(t_end + 1, 15):
+            start = end - num_triples + 1
+            if start < 3: continue
+            needed = 0; subset = []
+            for rv in range(start, end + 1):
+                cs = by_rank.get(Rank(rv), [])
+                available = min(len(cs), 3)
+                subset.extend(cs[:available])
+                needed += max(0, 3 - available)
+            if needed == len(wilds):
+                parsed = parser.parse(subset + wilds)
+                if parsed: candidates.append(parsed)
+    else:
+        resp = finder.pick_response(table_combo)
+        if resp: candidates.append(resp)
+
+    # Add bomb
+    bomb = finder._find_any_bomb()
+    if bomb:
+        candidates.append(bomb)
+    return candidates
+
+
 def _generate_lead_candidates(finder: ComboFinder, hand: Tuple[Card, ...]) -> List[Combo]:
     """Generate a diverse set of lead candidates WITHOUT calling find_all()."""
     from ..combo_parser import ComboParser
@@ -243,16 +345,46 @@ class _FastSimAgent(BaseAgent):
 # ==================================================================
 
 class MonteCarloAgent(BaseAgent):
-    """Monte Carlo agent with opponent hand sampling and rollout simulation.
+    """Monte Carlo agent with opponent hand sampling and rollout simulation."""
 
-    Algorithm:
-      1. Generate candidate plays from my hand
-      2. For each candidate:
-         a. Sample opponent hands from unseen cards (N times)
-         b. For each sample: simulate game to completion
-         c. Record whether "my team" won
-      3. Pick the candidate with highest win rate
-    """
+    def score_candidates(self, view: PlayerView, candidates: List[Combo],
+                         can_pass: bool = False) -> List[Tuple[Combo | None, float]]:
+        """Score a pre-defined list of candidates. Returns [(candidate, win_rate), ...].
+
+        None represents PASS. Used by the suggest API to evaluate specific plays.
+        """
+        import time
+        t_start = time.time()
+        pid = view.player_id
+        counter = CardCounter(view.my_hand)
+        for p in range(4):
+            if p != pid:
+                counter.set_opponent_hand_sizes({
+                    p: view.opponent_hand_size(p) for p in range(4) if p != pid
+                })
+        for c in view.played_cards:
+            counter._seen.add(c.id)
+
+        all_candidates = list(candidates)
+        if can_pass:
+            all_candidates.append(None)
+
+        results = []
+        for candidate in all_candidates:
+            if time.time() - t_start > self.time_limit_ms / 1000:
+                break
+            wins = 0
+            sims = 0
+            for _ in range(self.num_samples):
+                if time.time() - t_start > self.time_limit_ms / 1000:
+                    break
+                if self._run_simulation(view, candidate, counter):
+                    wins += 1
+                sims += 1
+            wr = wins / sims if sims > 0 else 0.0
+            results.append((candidate, wr))
+
+        return results
 
     def __init__(self, num_samples: int = 50, time_limit_ms: float = 3000,
                  params: AIParams = DEFAULT_PARAMS):
@@ -273,17 +405,11 @@ class MonteCarloAgent(BaseAgent):
                time_limit_ms=self.time_limit_ms)
         finder = ComboFinder(hand, level)
 
-        # Generate candidates
+        # Generate candidates — same enumeration as suggest endpoint
         if table.is_empty or table.last_played_player == pid:
             candidates = _generate_lead_candidates(finder, hand)
         else:
-            candidates = []
-            combo = finder.pick_response(table.current_combo)
-            if combo:
-                candidates.append(combo)
-            bomb = finder._find_any_bomb()
-            if bomb and bomb not in candidates:
-                candidates.append(bomb)
+            candidates = _enumerate_responses(hand, table.current_combo, finder, level)
 
         can_pass = (not table.is_empty and table.last_played_player != pid)
 
@@ -342,7 +468,9 @@ class MonteCarloAgent(BaseAgent):
             return []
 
         best = max(results, key=lambda r: r[1])
+        best_wr = best[1]
         elapsed = (time.time() - t_start) * 1000
+        choice_cards = [x.display for x in best[0].cards] if best[0] else []
         ai_log(pid, "decision_end",
                agent="MonteCarlo",
                candidates_scored=[{
@@ -351,6 +479,8 @@ class MonteCarloAgent(BaseAgent):
                    "win_rate": round(wr, 3),
                } for c, wr in results],
                choice=(f"{best[0].combo_type.name}" if best[0] else "PASS"),
+               choice_cards=choice_cards,
+               choice_win_rate=round(best_wr, 3),
                elapsed_ms=round(elapsed, 1))
         if best[0] is None:
             return []
@@ -367,31 +497,45 @@ class MonteCarloAgent(BaseAgent):
         Returns True if my team wins.
         """
         my_id = view.player_id
-        # Clone from the underlying state (need full state for simulation)
         sim_state = _clone_full_state_from_view(view)
 
-        # Apply my play
-        _apply_play_to_state(sim_state, my_id, my_play)
+        # Apply my play (or pass)
+        if my_play is not None:
+            _apply_play_to_state(sim_state, my_id, my_play)
+        else:
+            sim_state.table.record_pass(my_id)
+            sim_state.current_player = (my_id + 1) % 4
 
         if len(sim_state.finished_positions) >= 3:
             return self._did_i_win(sim_state, my_id)
 
-        # Collect all cards not in my hand and not already played
-        my_card_ids = {c.id for c in view.my_hand}
-        played_ids = {c.id for c in view.played_cards}
-        pool = [Card.from_id(i) for i in range(108)
-                if i not in my_card_ids and i not in played_ids]
-        random.shuffle(pool)
-        idx = 0
-        for pid in range(4):
-            if pid == my_id:
-                continue
-            size = view.opponent_hand_size(pid)
-            sim_state.hands = tuple(
-                tuple(pool[idx:idx + size]) if i == pid else h
-                for i, h in enumerate(sim_state.hands)
-            )
-            idx += size
+        # Deal unseen cards using tracker (constrained sampling)
+        if view.tracker is not None:
+            sampled = view.tracker.sample_opponent_hands()
+            for pid in range(4):
+                if pid == my_id:
+                    continue
+                sim_state.hands = tuple(
+                    tuple(sampled.get(pid, [])) if i == pid else h
+                    for i, h in enumerate(sim_state.hands)
+                )
+        else:
+            # Fallback: random deal
+            my_card_ids = {c.id for c in view.my_hand}
+            played_ids = {c.id for c in view.played_cards}
+            pool = [Card.from_id(i) for i in range(108)
+                    if i not in my_card_ids and i not in played_ids]
+            random.shuffle(pool)
+            idx = 0
+            for pid in range(4):
+                if pid == my_id:
+                    continue
+                size = view.opponent_hand_size(pid)
+                sim_state.hands = tuple(
+                    tuple(pool[idx:idx + size]) if i == pid else h
+                    for i, h in enumerate(sim_state.hands)
+                )
+                idx += size
 
         my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
 

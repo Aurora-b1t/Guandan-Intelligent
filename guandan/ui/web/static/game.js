@@ -9,6 +9,8 @@ let debugMode = true;                // default ON
 let flatLayout = false;              // false = vertical columns, true = horizontal
 let comboStrips = [];                // [{cardIds: [id,...]}, ...]
 let aiDebugOpen = false;             // AI debug panel
+let showWinRate = false;             // win rate overlay
+let _playerWinRates = {};            // {player_id: win_rate} from AI log
 let pollTimer = null;                // polling interval ID
 
 const SUIT_CHARS = {0: '♣', 1: '♦', 2: '♥', 3: '♠', 4: ''};
@@ -24,7 +26,7 @@ async function fetchState() {
   gameState = await r.json();
   render();
   if (debugMode) fetchDebug();
-  if (aiDebugOpen) fetchAILog();
+  if (aiDebugOpen || showWinRate) fetchAILog();
 }
 
 function startPolling() {
@@ -34,7 +36,7 @@ function startPolling() {
     gameState = await r.json();
     render();
     if (debugMode) fetchDebug();
-    if (aiDebugOpen) fetchAILog();
+    if (aiDebugOpen || showWinRate) fetchAILog();
     if (gameState.my_turn || gameState.game_over || gameState.round_over) {
       stopPolling();
     }
@@ -200,6 +202,15 @@ function render() {
   if (!gameState) return;
   myTurn = gameState.my_turn;
 
+  // Start overlay
+  const started = gameState.game_started;
+  document.getElementById('start-overlay').style.display = started ? 'none' : 'block';
+  document.getElementById('controls').style.display = started ? 'block' : 'none';
+  if (!started) {
+    document.getElementById('message').textContent = '点击「开始游戏」';
+    return;
+  }
+
   document.getElementById('info-level').textContent = gameState.level;
   document.getElementById('info-round').textContent = gameState.round;
   document.getElementById('info-trick').textContent = gameState.trick;
@@ -259,12 +270,24 @@ function renderTrickHistory(history) {
   for (const entry of history) {
     const zone = document.getElementById('play-' + entry.player);
     if (!zone) continue;
+    let wrLabel = '';
+    if (showWinRate) {
+      let wr = null;
+      if (entry.player === 0) {
+        wr = gameState.human_win_rate;
+      } else {
+        wr = _playerWinRates[entry.player];
+      }
+      if (wr != null) {
+        wrLabel = ' <span style="font-size:0.65em;color:#f1c40f;font-weight:bold">' + (wr * 100).toFixed(1) + '%</span>';
+      }
+    }
     if (entry.pass) {
-      zone.innerHTML = '<span class="pass-text">过</span>';
+      zone.innerHTML = '<span class="pass-text">过</span>' + wrLabel;
     } else if (entry.combo) {
       let html = '<span class="combo-tag">' + (entry.combo.type_cn || entry.combo.type) + '</span> ';
       for (const c of entry.combo.cards) html += cardHTML(c, true);
-      zone.innerHTML = html;
+      zone.innerHTML = html + wrLabel;
     }
   }
 }
@@ -491,6 +514,16 @@ async function clearAILog() {
 
 function renderAILog(data) {
   const container = document.getElementById('ai-debug-content');
+
+  // Update per-player win rates from latest decision_end entries
+  if (data && data.entries) {
+    for (const e of data.entries) {
+      if (e.type === 'decision_end' && e.data.choice_win_rate != null) {
+        _playerWinRates[e.player] = e.data.choice_win_rate;
+      }
+    }
+  }
+
   if (!data || !data.entries || data.entries.length === 0) {
     container.innerHTML = '<div style="color:#888;padding:10px">暂无AI决策记录</div>';
     return;
@@ -550,9 +583,13 @@ function renderAILog(data) {
       }
     } else if (entry.type === 'decision_end') {
       const choice = entry.data.choice || '?';
+      const choiceWR = entry.data.choice_win_rate;
       const elapsed = entry.data.elapsed_ms || 0;
-      html += '<div style="font-size:0.75em;color:#aaa">';
+      html += '<div style="font-size:0.78em;color:#aaa">';
       html += '选择: <b style="color:#27ae60">' + choice + '</b>';
+      if (choiceWR != null) {
+        html += ' | 胜率: <b style="color:#f1c40f">' + (choiceWR * 100).toFixed(1) + '%</b>';
+      }
       html += ' <span style="color:#666">(' + elapsed + 'ms)</span>';
       html += '</div>';
       if (entry.data.candidates_scored) {
@@ -572,6 +609,31 @@ function renderAILog(data) {
 
   container.innerHTML = configLine + html;
   container.scrollTop = container.scrollHeight;
+}
+
+// ==================================================================
+// Win Rate overlay toggle
+// ==================================================================
+
+function toggleWinRate() {
+  showWinRate = !showWinRate;
+  const btn = document.getElementById('btn-winrate');
+  btn.style.background = showWinRate ? '#27ae60' : '#555';
+  btn.style.color = showWinRate ? '#fff' : '#999';
+  if (showWinRate) fetchAILog();
+  render();
+}
+
+// ==================================================================
+// Start Game
+// ==================================================================
+
+async function startGame() {
+  document.getElementById('start-overlay').style.display = 'none';
+  const r = await fetch('/api/start_game', {method: 'POST'});
+  gameState = await r.json();
+  render();
+  if (debugMode) fetchDebug();
 }
 
 // ==================================================================
@@ -620,25 +682,58 @@ async function aiSuggest() {
   let html = '<table style="width:100%;font-size:0.82em;border-collapse:collapse">';
   html += '<tr style="color:#999"><th>牌型</th><th>牌面</th><th style="text-align:right">胜率</th><th></th></tr>';
   let bestRate = d.candidates[0]?.win_rate || 0;
+  let rowIdx = 0;
   for (const c of d.candidates.slice(0, 8)) {
     const isBest = c.win_rate === bestRate;
     const bg = isBest ? 'background:rgba(39,174,96,0.15)' : '';
     const color = isBest ? 'color:#27ae60' : 'color:#ccc';
     const rate = (c.win_rate * 100).toFixed(1) + '%';
-    const cards = (c.cards || []).join(' ');
-    html += `<tr style="${bg};${color};border-bottom:1px solid rgba(255,255,255,0.04)">
-      <td>${c.type||'?'}</td><td>${cards}</td><td style="text-align:right;font-weight:bold">${rate}</td>
-      <td style="white-space:nowrap;padding-left:12px">
-        <button onclick="selectSuggested('${(c.cards||[]).join(',')}', this)" style="background:#555;color:#ccc;border:none;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:0.7em">选中</button>
-        <button onclick="playSuggested('${(c.cards||[]).join(',')}')" style="background:#27ae60;color:#fff;border:none;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:0.75em;margin-left:2px">出牌</button>
-      </td>
-    </tr>`;
+    const cardsStr = (c.cards || []).join(',');
+    const isPass = c.type === 'PASS';
+    if (isPass) {
+      html += `<tr style="${bg};${color};border-bottom:1px solid rgba(255,255,255,0.04)">
+        <td>过牌</td><td style="color:#e67e22">—</td><td style="text-align:right;font-weight:bold">${rate}</td>
+        <td style="white-space:nowrap;padding-left:12px">
+          <button data-action="pass" style="background:#e67e22;color:#fff;border:none;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:0.75em">过牌</button>
+        </td>
+      </tr>`;
+    } else {
+      html += `<tr style="${bg};${color};border-bottom:1px solid rgba(255,255,255,0.04)">
+        <td>${c.type_cn||c.type||'?'}</td><td>${(c.cards||[]).join(' ')}</td><td style="text-align:right;font-weight:bold">${rate}</td>
+        <td style="white-space:nowrap;padding-left:12px">
+          <button data-action="select" data-cards="${cardsStr}" style="background:#555;color:#ccc;border:none;padding:1px 6px;border-radius:3px;cursor:pointer;font-size:0.7em">选中</button>
+          <button data-action="play" data-cards="${cardsStr}" style="background:#27ae60;color:#fff;border:none;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:0.75em;margin-left:2px">出牌</button>
+        </td>
+      </tr>`;
+    }
   }
   html += '</table>';
   content.innerHTML = html;
+
+  // Attach event listeners (more reliable than inline onclick)
+  content.querySelectorAll('button[data-action="pass"]').forEach(btn => {
+    btn.addEventListener('click', () => passTurn());
+  });
+  content.querySelectorAll('button[data-action="select"]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      selectSuggested(this.dataset.cards, this);
+    });
+  });
+  content.querySelectorAll('button[data-action="play"]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      playSuggested(this.dataset.cards);
+    });
+  });
 }
 
+let _lastSuggestBtns = [];
+
+let _activeSuggestBtn = null;
+
 function selectSuggested(displayStrs, btnEl) {
+  if (_activeSuggestBtn && _activeSuggestBtn !== btnEl) {
+    _activeSuggestBtn.textContent = '选中';
+  }
   const displays = displayStrs.split(',');
   const hand = gameState.my_hand;
   const neededIds = [];
@@ -651,16 +746,19 @@ function selectSuggested(displayStrs, btnEl) {
   if (allSelected) {
     neededIds.forEach(id => selectedCards.delete(id));
     if (btnEl) btnEl.textContent = '选中';
+    _activeSuggestBtn = null;
   } else {
     selectedCards.clear();
     neededIds.forEach(id => selectedCards.add(id));
     if (btnEl) btnEl.textContent = '取消';
+    _activeSuggestBtn = btnEl;
+    activeStrip = null;
   }
   render();
 }
 
 async function playSuggested(displayStrs) {
-  // Always select these cards (don't toggle), then play
+  if (!myTurn) return;
   const displays = displayStrs.split(',');
   selectedCards.clear();
   const hand = gameState.my_hand;
@@ -671,7 +769,26 @@ async function playSuggested(displayStrs) {
   }
   if (selectedCards.size > 0) {
     await playCards();
+  } else {
+    // Couldn't match — just try playing whatever is selected
+    if (selectedCards.size === 0) {
+      // Reload state and retry once
+      await fetchState();
+      if (myTurn && gameState) {
+        const h = gameState.my_hand;
+        selectedCards.clear();
+        for (const d of displays) {
+          const card = h.find(c => c.display === d.trim() && !usedIds.has(c.id));
+          if (card) { selectedCards.add(card.id); usedIds.add(card.id); }
+        }
+        if (selectedCards.size > 0) await playCards();
+      }
+    }
   }
+}
+
+function updatePlayButton() {
+  document.getElementById('btn-play').disabled = !myTurn || selectedCards.size === 0;
 }
 
 // ==================================================================

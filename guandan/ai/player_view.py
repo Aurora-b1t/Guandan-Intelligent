@@ -12,6 +12,7 @@ from ..card import Card
 from ..combo import Combo
 from ..game_state import GameState
 from ..table import TableState
+from .action_log import ActionLog, CardTracker
 
 
 class PlayerView:
@@ -20,7 +21,7 @@ class PlayerView:
     Exposes:
       - Own hand (full cards)
       - Table state (public)
-      - Played cards history (public)
+      - Action log + CardTracker (memory)
       - Other players' hand sizes (public)
       - Level, trick number, finished positions (public)
 
@@ -28,25 +29,33 @@ class PlayerView:
       - Other players' specific cards
     """
 
-    def __init__(self, state: GameState, player_id: int):
+    def __init__(self, state: GameState, player_id: int, action_log: ActionLog = None):
         self._state = state
         self.player_id = player_id
         self.level = state.level
         self.round_number = state.round_number
         self.trick_number = state.trick_number
-        self.table = state.table  # TableState is public
+        self.table = state.table
         self.current_player = state.current_player
         self.finished_positions = list(state.finished_positions)
         self.played_cards = list(state.played_cards)
 
-        # Own hand — full visibility
+        # Own hand
         self.my_hand: Tuple[Card, ...] = state.hands[player_id]
 
-        # Opponent hands — only sizes
+        # Opponent sizes
         self._opponent_sizes: dict[int, int] = {}
         for p in range(4):
             if p != player_id:
                 self._opponent_sizes[p] = len(state.hands[p])
+
+        # Memory module
+        self.action_log = action_log
+        self.tracker = CardTracker(self.my_hand, action_log) if action_log else None
+        if self.tracker:
+            self.tracker.set_opponent_sizes(
+                {p: self._opponent_sizes[p] for p in range(4) if p != player_id}
+            )
 
     @property
     def active_players(self) -> List[int]:

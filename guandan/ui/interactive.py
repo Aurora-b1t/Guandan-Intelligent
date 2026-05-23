@@ -47,7 +47,12 @@ class InteractiveGame:
         self.config["players"] = {
             p: dict(cfg) for p, cfg in DEFAULT_CONFIG["players"].items()
         }
-        self._auto_play = False  # full auto mode (all AI)
+        self._auto_play = False
+        self._game_started = False
+        self._human_win_rate = None  # MC win rate for human's last action
+        # Action log — memory module
+        from ..ai.action_log import ActionLog
+        self.action_log = ActionLog()
 
     # ------------------------------------------------------------------
     # Public API
@@ -60,14 +65,11 @@ class InteractiveGame:
         return self._start_round()
 
     def play_cards(self, card_ids: List[int]) -> dict:
-        """Human plays the given cards. Returns updated state.
-
-        Applies the play synchronously, then spawns a background thread
-        for AI processing. Returns immediately with my_turn=False.
-        The frontend polls until my_turn becomes True.
-        """
+        """Human plays the given cards."""
         if self._game_over:
             return self._build_state()
+        if not self._game_started:
+            return self._build_state(error="请先点击「开始游戏」")
         if self._ai_running:
             return self._build_state(error="AI思考中，请等待")
         if not self._is_human_turn():
@@ -93,6 +95,17 @@ class InteractiveGame:
             return self._build_state(error="你是首家，不能过")
 
         return self._process_human_pass()
+
+    def start_game(self) -> dict:
+        """Called when human clicks '开始游戏'. Triggers AI if needed."""
+        if self._game_started:
+            return self._build_state()
+        self._game_started = True
+        if self.state is not None:
+            starter = self.state.current_player
+            if starter != self.HUMAN_ID:
+                self._ai_running = True
+        return self._build_state()
 
     def get_state(self) -> dict:
         """Return current game state. If AI is running, process one AI turn."""
@@ -128,6 +141,8 @@ class InteractiveGame:
         else:
             starter = self._round_results[-1].positions[0] if self._round_results else 0
 
+        from ..ai.action_log import ActionLog
+        self.action_log = ActionLog()
         self.state = GameState(
             level=round_level,
             round_number=self.round_number,
@@ -137,10 +152,11 @@ class InteractiveGame:
         )
 
         # If human is not the starter, auto-play until human's turn
-        if starter != self.HUMAN_ID:
-            self._ai_running = True
+        # Don't auto-start AI — wait for "开始游戏" button
+        self._game_started = False
+        self._ai_running = False
 
-        self._message = "请出牌（你是首家）" if (starter == self.HUMAN_ID) else ""
+        self._message = "点击「开始游戏」" if not self._game_started else ""
         return self._build_state()
 
     # ------------------------------------------------------------------
@@ -161,6 +177,7 @@ class InteractiveGame:
             return self._build_state(error=f"不合法的出牌: {result.reason.name}")
 
         self._apply_play(self.HUMAN_ID, cards, result.resolved_combo)
+        self._compute_human_win_rate(cards)
 
         if self._check_round_end():
             return self._finish_round()
@@ -171,7 +188,9 @@ class InteractiveGame:
     def _process_human_pass(self) -> dict:
         """Process human pass. AI turns will run step-by-step via get_state()."""
         self.state.table.record_pass(self.HUMAN_ID)
+        self.action_log.record_pass(self.state.trick_number, self.HUMAN_ID, self.state.table.current_combo)
         self.state.current_player = (self.HUMAN_ID + 1) % 4
+        self._compute_human_win_rate([])  # empty = pass
 
         if self._check_round_end():
             return self._finish_round()
@@ -242,7 +261,7 @@ class InteractiveGame:
         hand = self.state.hands[player_id]
 
         agent = create_agent_for_player(self.config, player_id)
-        view = PlayerView(self.state, player_id)
+        view = PlayerView(self.state, player_id, self.action_log)
         play_cards = agent.choose_play(view)
 
         result = self.rules.validate_play(
@@ -254,8 +273,8 @@ class InteractiveGame:
         )
 
         if not result.is_legal:
-            # AI error — force pass
             self.state.table.record_pass(player_id)
+            self.action_log.record_pass(self.state.trick_number, player_id, self.state.table.current_combo)
             self.state.current_player = (player_id + 1) % 4
             return
 
@@ -263,13 +282,15 @@ class InteractiveGame:
             self._apply_play(player_id, play_cards, result.resolved_combo)
         else:
             self.state.table.record_pass(player_id)
+            self.action_log.record_pass(self.state.trick_number, player_id, self.state.table.current_combo)
             self.state.current_player = (player_id + 1) % 4
 
     def _apply_play(self, player_id: int, cards: List[Card], combo: Combo):
-        """Apply a play: update table and remove cards from hand."""
+        """Apply a play: update table, remove cards, log action."""
         hand = self.state.hands[player_id]
         played_ids = {c.id for c in cards}
         new_hand = tuple(c for c in hand if c.id not in played_ids)
+        self.action_log.record_play(self.state.trick_number, player_id, cards, combo)
         self.state.hands = tuple(
             new_hand if i == player_id else h
             for i, h in enumerate(self.state.hands)
@@ -322,6 +343,29 @@ class InteractiveGame:
             trick_number=self.state.trick_number,
         )
 
+    def _compute_human_win_rate(self, cards: list):
+        """MC to score the human's last action, using global config params."""
+        try:
+            from ..ai.player_view import PlayerView
+            from ..ai.agent import MonteCarloAgent
+            from ..combo_parser import ComboParser
+            from ..ai.registry import create_agent_for_player
+            agent = create_agent_for_player(self.config, self.HUMAN_ID)
+            if not isinstance(agent, MonteCarloAgent):
+                agent = MonteCarloAgent()
+            view = PlayerView(self.state, self.HUMAN_ID, self.action_log)
+            if not cards:
+                scored = agent.score_candidates(view, [], can_pass=True)
+                self._human_win_rate = scored[0][1] if scored else None
+            else:
+                parser = ComboParser(self.state.level)
+                combo = parser.parse(cards)
+                if combo:
+                    scored = agent.score_candidates(view, [combo], can_pass=False)
+                    self._human_win_rate = scored[0][1] if scored else None
+        except Exception:
+            self._human_win_rate = None
+
     def _check_round_end(self) -> bool:
         return self.state is not None and len(self.state.finished_positions) >= 3
 
@@ -370,6 +414,8 @@ class InteractiveGame:
                 "team_level_1": self.team_levels[1],
                 "round_results": [],
                 "trick_history": [],
+                "game_started": self._game_started,
+                "human_win_rate": None,
             }
 
         # Human hand (sorted by rank then suit)
@@ -482,6 +528,8 @@ class InteractiveGame:
             "ai_running": self._ai_running,
             "ai_thinking_player": self.state.current_player if self._ai_running else -1,
             "auto_play": self._auto_play,
+            "game_started": self._game_started,
+            "human_win_rate": self._human_win_rate,
         }
 
     def _card_json(self, card: Card) -> dict:

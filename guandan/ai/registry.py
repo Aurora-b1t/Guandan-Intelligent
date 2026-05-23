@@ -23,8 +23,8 @@ _MODELS: Dict[str, type] = {
 _DEFAULT_PARAMS: Dict[str, dict] = {
     "heuristic": dict(DEFAULT_AI_PARAMS.to_dict()),
     "monte_carlo": {
-        "num_samples": 50,
-        "time_limit_ms": 8000,
+        "num_samples": 128,
+        "time_limit_ms": 10000,
         **DEFAULT_AI_PARAMS.to_dict(),
     },
     "random": {},
