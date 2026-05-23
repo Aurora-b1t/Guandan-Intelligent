@@ -49,7 +49,7 @@ class InteractiveGame:
         }
         self._auto_play = False
         self._game_started = False
-        self._human_win_rate = None  # MC win rate for human's last action
+        self._human_win_rate = None
         # Action log — memory module
         from ..ai.action_log import ActionLog
         self.action_log = ActionLog()
@@ -247,8 +247,19 @@ class InteractiveGame:
             self._ai_running = False
             return
 
-        # After AI plays, check if the next player is human
-        # (will be checked on the NEXT get_state call)
+        # Check if trick just ended (all others passed after this play)
+        table = self.state.table
+        if table.last_played_player >= 0:
+            other_active = [p for p in self.state.active_players
+                            if p != table.last_played_player]
+            if table.pass_count >= len(other_active):
+                self.state.current_player = table.last_played_player
+                self._start_new_trick()
+                if self.state.current_player == self.HUMAN_ID:
+                    if self._auto_play:
+                        pass
+                    else:
+                        self._ai_running = False
 
     # ------------------------------------------------------------------
     # Auto-play AI turns

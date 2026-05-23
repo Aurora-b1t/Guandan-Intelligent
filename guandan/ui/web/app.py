@@ -175,6 +175,8 @@ def api_config():
         if data:
             if "global_model" in data:
                 game.config["global_model"] = data["global_model"]
+            if "simulation_model" in data:
+                game.config["simulation_model"] = data["simulation_model"]
             if "global_params" in data:
                 game.config["global_params"] = data["global_params"]
             if "players" in data:
@@ -186,11 +188,13 @@ def api_config():
                         game.config["players"][p]["params"] = cfg["params"]
             if "auto_play" in data:
                 game._auto_play = data["auto_play"]
-    from ...ai.registry import list_models, get_model_defaults
+    from ...ai.registry import list_models, list_sim_models, get_model_defaults
     return jsonify({
         "config": game.config,
         "available_models": list_models(),
+        "available_sim_models": list_sim_models(),
         "model_defaults": {m: get_model_defaults(m) for m in list_models()},
+        "sim_model_defaults": {m: get_model_defaults(m) for m in list_sim_models()},
     })
 
 
@@ -222,10 +226,7 @@ def api_suggest():
         from ...ai.agent import _enumerate_responses
         candidates = _enumerate_responses(hand, table_combo, finder, level)
 
-    if not candidates:
-        return jsonify({"candidates": [], "message": "无候选"})
-
-    # Run MC to score OUR candidates directly (not MC's own)
+    # Run MC to score candidates + pass option
     can_pass = not is_lead
     view = PlayerView(game.state, pid, game.action_log)
     mc_agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)

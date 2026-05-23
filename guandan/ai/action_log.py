@@ -126,19 +126,9 @@ class CardTracker:
         unseen = self.unseen_cards()
         random.shuffle(unseen)
 
-        # Simple constrained sampling:
-        # For players who passed on a high pair, deprioritize giving them high pairs
-        # This is a lightweight heuristic — full constraint sampling is complex
         result: Dict[int, List[Card]] = {1: [], 2: [], 3: []}
-
-        # Group unseen by rough quality
-        high_cards = [c for c in unseen if c.rank.value >= 13]  # K, A, jokers
-        low_cards = [c for c in unseen if c.rank.value < 13]
-
-        random.shuffle(high_cards)
-        random.shuffle(low_cards)
-        pool = low_cards + high_cards  # deal low cards first
-
+        pool = list(unseen)
+        random.shuffle(pool)
         idx = 0
         for pid in [1, 2, 3]:
             size = self._opp_sizes.get(pid, 0)

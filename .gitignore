@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.VSCodeCounter/
 *.py[cod]
 *.egg-info/
 dist/

@@ -10,7 +10,8 @@ let flatLayout = false;              // false = vertical columns, true = horizon
 let comboStrips = [];                // [{cardIds: [id,...]}, ...]
 let aiDebugOpen = false;             // AI debug panel
 let showWinRate = false;             // win rate overlay
-let _playerWinRates = {};            // {player_id: win_rate} from AI log
+let _playerWinRates = {};            // {player_id: win_rate}
+let _playerTimedOut = {};            // {player_id: bool} timeout flag
 let pollTimer = null;                // polling interval ID
 
 const SUIT_CHARS = {0: '♣', 1: '♦', 2: '♥', 3: '♠', 4: ''};
@@ -280,6 +281,9 @@ function renderTrickHistory(history) {
       }
       if (wr != null) {
         wrLabel = ' <span style="font-size:0.65em;color:#f1c40f;font-weight:bold">' + (wr * 100).toFixed(1) + '%</span>';
+        if (_playerTimedOut[entry.player]) {
+          wrLabel += ' <span style="font-size:0.6em;color:#e67e22">⚠</span>';
+        }
       }
     }
     if (entry.pass) {
@@ -520,6 +524,7 @@ function renderAILog(data) {
     for (const e of data.entries) {
       if (e.type === 'decision_end' && e.data.choice_win_rate != null) {
         _playerWinRates[e.player] = e.data.choice_win_rate;
+        _playerTimedOut[e.player] = e.data.timed_out || false;
       }
     }
   }
@@ -591,6 +596,9 @@ function renderAILog(data) {
         html += ' | 胜率: <b style="color:#f1c40f">' + (choiceWR * 100).toFixed(1) + '%</b>';
       }
       html += ' <span style="color:#666">(' + elapsed + 'ms)</span>';
+      if (entry.data.timed_out) {
+        html += ' <span style="color:#e67e22;font-size:0.75em" title="超时截断，胜率基于部分采样">⚠超时</span>';
+      }
       html += '</div>';
       if (entry.data.candidates_scored) {
         html += '<table class="ai-candidates-table">';
@@ -671,7 +679,17 @@ async function aiSuggest() {
 
   const r = await fetch('/api/suggest');
   const d = await r.json();
-  if (!d.candidates || d.candidates.length === 0) {
+  const hasOnlyPass = (!d.candidates || d.candidates.length === 0) ||
+    (d.candidates.length === 1 && d.candidates[0].type === 'PASS');
+  if (hasOnlyPass) {
+    if (d.candidates && d.candidates.length === 1 && d.candidates[0].type === 'PASS') {
+      // Show pass win rate
+      const wr = (d.candidates[0].win_rate * 100).toFixed(1);
+      content.innerHTML = '<span style="color:#e67e22">手牌中没有任何能压过牌桌的牌型</span>' +
+        '<br><span style="font-size:0.85em;color:#f1c40f">过牌胜率: ' + wr + '%</span>' +
+        '<br><button onclick="passTurn()" style="background:#e67e22;color:#fff;border:none;padding:2px 12px;border-radius:4px;cursor:pointer;font-size:0.8em;margin-top:4px">过牌</button>';
+      return;
+    }
     const canPass = gameState && gameState.can_pass;
     content.innerHTML = '<span style="color:#e67e22">' +
       (canPass ? '手牌中没有任何能压过牌桌的牌型，建议过牌' : '你是首家，但AI未找到合适的出牌建议') +
@@ -838,7 +856,9 @@ async function aiEvaluate() {
 
 let configOpen = false;
 let availableModels = [];
+let availableSimModels = [];
 let modelDefaults = {};
+let simModelDefaults = {};
 let currentConfig = {};
 let configTab = 'global';
 
@@ -864,7 +884,9 @@ async function fetchConfig() {
   const r = await fetch('/api/config');
   const d = await r.json();
   availableModels = d.available_models || [];
+  availableSimModels = d.available_sim_models || [];
   modelDefaults = d.model_defaults || {};
+  simModelDefaults = d.sim_model_defaults || {};
   currentConfig = d.config || {};
 
 
@@ -892,12 +914,24 @@ function buildConfigTab(tabId, title, model, playerId) {
   const isEnabled = isGlobal ? true : !!(currentConfig.players[playerId] || {}).model;
 
   const special = ['num_samples', 'time_limit_ms'];
-  // Merge: current config values override defaults
   const defaults = modelDefaults[model] || {};
   const currentParams = isGlobal
     ? (currentConfig.global_params || {})[model] || {}
     : (currentConfig.players[playerId] || {}).params || {};
   const params = {...defaults, ...currentParams};
+
+  // Include simulation model weights if blind
+  let simDefaults = {};
+  let simCurrentParams = {};
+  const simModel = isGlobal
+    ? (document.getElementById('cfg-simulation-model')?.value || currentConfig.simulation_model || 'informed')
+    : ((currentConfig.players[playerId] || {}).params || {}).simulation_model || currentConfig.simulation_model || 'informed';
+  if (simModel === 'blind') {
+    simDefaults = simModelDefaults['blind'] || {};
+    simCurrentParams = isGlobal
+      ? ((currentConfig.global_params || {})['blind'] || {})
+      : ((currentConfig.players[playerId] || {}).params || {});
+  }
   const specialLabels = {num_samples:'采样次数', time_limit_ms:'时限(ms)'};
 
   let specialHtml = '';
@@ -914,12 +948,14 @@ function buildConfigTab(tabId, title, model, playerId) {
     card_usage_weight:'每张牌奖励', pass_threshold:'过牌阈值', sim_pass_prob:'模拟过牌率'
   };
   let weightHtml = '';
-  for (const [k, v] of Object.entries(params)) {
+  const mergedWeights = {...simDefaults, ...simCurrentParams, ...params};
+  for (const [k, v] of Object.entries(mergedWeights)) {
     if (special.includes(k)) continue;
     const label = weightLabels[k] || k;
+    const pref = simDefaults.hasOwnProperty(k) && isGlobal ? 'g' : prefix;
     weightHtml += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
       <span style="width:110px;text-align:right;font-size:0.85em">${label}</span>
-      <input type="number" value="${v}" step="0.5" id="cfg-${prefix}param-${k}" style="width:56px;background:#222;color:#ccc;border:1px solid #444;border-radius:4px;padding:2px 5px;font-size:0.85em">
+      <input type="number" value="${v}" step="0.5" id="cfg-${pref}param-${k}" style="width:56px;background:#222;color:#ccc;border:1px solid #444;border-radius:4px;padding:2px 5px;font-size:0.85em">
     </div>`;
   }
 
@@ -928,16 +964,37 @@ function buildConfigTab(tabId, title, model, playerId) {
       <input type="checkbox" id="${enabledId}" ${isEnabled?'checked':''} onchange="onPlayerEnabledChange(${playerId})"> 启用独立配置
     </label>` : '';
 
+  // Simulation model selector (for monte_carlo users)
+  let simHtml = '';
+  const showSim = isGlobal || model === 'monte_carlo';
+  if (showSim && availableSimModels.length > 0) {
+    const simLabels = {informed:'全局感知', blind:'盲评(权重)'};
+    const simCurParams = isGlobal
+      ? (currentConfig.global_params || {})
+      : (currentConfig.players[playerId] || {}).params || {};
+    const curSim = isGlobal
+      ? (currentConfig.simulation_model || 'informed')
+      : (simCurParams.simulation_model || currentConfig.simulation_model || 'informed');
+    const simId = isGlobal ? 'cfg-simulation-model' : ('cfg-psim-' + playerId);
+    simHtml = `<div style="margin-bottom:4px">
+      <span style="color:#aaa;margin-right:4px;font-size:0.85em">MC模拟:</span>
+      <select id="${simId}" onchange="onSimModelChange('${tabId}',${playerId})" style="background:#222;color:#ddd;border:1px solid #444;padding:3px 8px;border-radius:4px;font-size:0.85em">
+        ${availableSimModels.map(m => `<option value="${m}" ${curSim===m?'selected':''}>${simLabels[m]||m}</option>`).join('')}
+      </select>
+    </div>`;
+  }
+
   container.innerHTML = `
     ${enabledCheckbox}
     <div style="margin-bottom:8px">
-      <span style="color:#aaa;margin-right:8px">模型:</span>
+      <span style="color:#aaa;margin-right:8px">决策模型:</span>
       <select id="${selId}" onchange="onTabModelChange('${tabId}',${playerId})" style="background:#222;color:#ddd;border:1px solid #444;padding:4px 10px;border-radius:4px;font-size:0.9em">
         ${isGlobal ? '' : '<option value="">(全局)</option>'}
         ${modelOpts}
       </select>
       ${specialHtml}
     </div>
+    ${simHtml}
     <div style="color:#aaa;font-size:0.85em">${weightHtml}</div>`;
 }
 
@@ -949,6 +1006,25 @@ function onPlayerEnabledChange(playerId) {
     sel.value = '';
     onTabModelChange('p' + playerId, playerId);
   }
+}
+
+function onSimModelChange(tabId, playerId) {
+  const simSel = playerId === null
+    ? document.getElementById('cfg-simulation-model')
+    : document.getElementById('cfg-psim-' + playerId);
+  const simVal = simSel?.value || 'informed';
+  if (playerId === null) {
+    currentConfig.simulation_model = simVal;
+  } else {
+    if (!currentConfig.players[playerId]) currentConfig.players[playerId] = {model:null,params:{}};
+    if (!currentConfig.players[playerId].params) currentConfig.players[playerId].params = {};
+    currentConfig.players[playerId].params.simulation_model = simVal;
+  }
+  buildConfigTab(tabId, tabId === 'global' ? '全局' : ['你','右家','对家','左家'][playerId],
+    (playerId === null)
+      ? document.getElementById('cfg-global-model').value
+      : (document.getElementById('cfg-pmodel-' + playerId)?.value || currentConfig.global_model),
+    playerId);
 }
 
 function onTabModelChange(tabId, playerId) {
@@ -963,6 +1039,7 @@ function onTabModelChange(tabId, playerId) {
 async function applyConfig() {
   const data = {
     global_model: document.getElementById('cfg-global-model').value,
+    simulation_model: document.getElementById('cfg-simulation-model')?.value || 'informed',
     global_params: {},
     players: {},
   };
@@ -973,6 +1050,15 @@ async function applyConfig() {
   for (const k of Object.keys(gDefaults)) {
     const el = document.getElementById('cfg-gparam-' + k);
     if (el) data.global_params[gModel][k] = parseFloat(el.value) ?? gDefaults[k];
+  }
+  // Also save blind weights if simulation model uses them
+  if (data.simulation_model === 'blind') {
+    const bDefaults = simModelDefaults['blind'] || {};
+    data.global_params['blind'] = {};
+    for (const k of Object.keys(bDefaults)) {
+      const el = document.getElementById('cfg-gparam-' + k);
+      if (el) data.global_params['blind'][k] = parseFloat(el.value) ?? bDefaults[k];
+    }
   }
 
   for (const p of [0,1,2,3]) {
@@ -990,6 +1076,18 @@ async function applyConfig() {
       for (const k of Object.keys(pDefaults)) {
         const el = document.getElementById('cfg-p' + p + 'param-' + k);
         if (el) data.players[p].params[k] = parseFloat(el.value) ?? pDefaults[k];
+      }
+      // Simulation model per player
+      const simSel = document.getElementById('cfg-psim-' + p);
+      if (simSel) data.players[p].params.simulation_model = simSel.value;
+      // Blind weights
+      if (simSel && simSel.value === 'blind') {
+        data.global_params['blind'] = data.global_params['blind'] || {};
+        const bDefaults = simModelDefaults['blind'] || {};
+        for (const k of Object.keys(bDefaults)) {
+          const el = document.getElementById('cfg-p' + p + 'param-' + k);
+          if (el) data.players[p].params[k] = parseFloat(el.value) ?? bDefaults[k];
+        }
       }
     } else {
       data.players[p] = { model: null, params: null };

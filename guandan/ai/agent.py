@@ -55,26 +55,32 @@ def _enumerate_responses(hand: Tuple[Card, ...], table_combo: Combo,
 
     if ct.name == 'SINGLE':
         t_rank = table_combo.main_rank.value
-        for c in hand:
+        count = 0
+        for c in sorted(hand, key=lambda x: x.rank.value):
             if c.rank.value > t_rank:
                 parsed = parser.parse([c])
-                if parsed: candidates.append(parsed)
+                if parsed: candidates.append(parsed); count += 1
+                if count >= 5: break  # limit: 5 singles max
     elif ct.name == 'PAIR':
         t_rank = table_combo.main_rank.value
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
-        for rank, cards in by_rank.items():
+        count = 0
+        for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
             if rank.value > t_rank and len(cards) >= 2:
                 parsed = parser.parse(list(cards[:2]))
-                if parsed: candidates.append(parsed)
+                if parsed: candidates.append(parsed); count += 1
+                if count >= 4: break
     elif ct.name == 'TRIPLE':
         t_rank = table_combo.main_rank.value
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
-        for rank, cards in by_rank.items():
+        count = 0
+        for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
             if rank.value > t_rank and len(cards) >= 3:
                 parsed = parser.parse(list(cards[:3]))
-                if parsed: candidates.append(parsed)
+                if parsed: candidates.append(parsed); count += 1
+                if count >= 3: break
     elif ct.name in ('TRIPLE_SINGLE', 'TRIPLE_PAIR'):
         side = 1 if ct.name == 'TRIPLE_SINGLE' else 2
         t_rank = table_combo.main_rank.value
@@ -207,7 +213,27 @@ def _generate_lead_candidates(finder: ComboFinder, hand: Tuple[Card, ...]) -> Li
                     break
         break  # only try one length
 
-    # Bombs & rocket — excluded from lead candidates
+    # Bombs — included as lead candidates, scoring will decide
+    for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
+        nc = len(cards)
+        total = nc + len(wilds_list)
+        if total >= 4:
+            size = min(total, 8)
+            wild_need = max(0, size - nc)
+            all_cards = list(cards[:size - wild_need]) + wilds_list[:wild_need]
+            parsed = parser.parse(all_cards)
+            if parsed and parsed.is_bomb:
+                add(parsed)
+                break
+
+    # Rocket
+    big = [c for c in hand if c.rank == Rank.BIG_JOKER]
+    small = [c for c in hand if c.rank == Rank.SMALL_JOKER]
+    if len(big) >= 2 and len(small) >= 2:
+        parsed = parser.parse(big[:2] + small[:2])
+        if parsed:
+            add(parsed)
+
     return candidates
 
 
@@ -277,11 +303,14 @@ class HeuristicAgent(BaseAgent):
 
 
 # ==================================================================
-# Fast simulation agent (used inside Monte Carlo rollouts)
+# BlindAgent — simulation-only, weight-based, ignores opponent hands
 # ==================================================================
 
-class _FastSimAgent(BaseAgent):
-    """Fast agent for Monte Carlo rollouts — uses params but skips estimate_rounds()."""
+class BlindAgent(BaseAgent):
+    """Blind agent for MC simulations — scores by AIParams weights.
+
+    Does NOT inspect opponent hands. Tunable via 12 AIParams weights.
+    """
 
     def __init__(self, params: AIParams = DEFAULT_PARAMS):
         self.params = params
@@ -387,10 +416,11 @@ class MonteCarloAgent(BaseAgent):
         return results
 
     def __init__(self, num_samples: int = 50, time_limit_ms: float = 3000,
-                 params: AIParams = DEFAULT_PARAMS):
+                 params: AIParams = DEFAULT_PARAMS, config: dict = None):
         self.num_samples = num_samples
         self.time_limit_ms = time_limit_ms
         self.params = params
+        self._config = config  # for simulation model selection
 
     def choose_play(self, view: PlayerView) -> List[Card]:
         t_start = time.time()
@@ -435,24 +465,22 @@ class MonteCarloAgent(BaseAgent):
 
         # Score each candidate
         results = []
+        timed_out = False
         for candidate in all_candidates:
             if candidate is None:
-                # Pass candidate
                 results.append((None, 0.0))
                 continue
 
-            # Check time
             if time.time() - t_start > self.time_limit_ms / 1000:
+                timed_out = True
                 break
 
             wins = 0
             simulations = 0
-
-            # Run simulations
             for _ in range(self.num_samples):
                 if time.time() - t_start > self.time_limit_ms / 1000:
+                    timed_out = True
                     break
-
                 sim_result = self._run_simulation(
                     view, candidate, counter
                 )
@@ -463,7 +491,6 @@ class MonteCarloAgent(BaseAgent):
             win_rate = wins / simulations if simulations > 0 else 0.0
             results.append((candidate, win_rate))
 
-        # Pick best
         if not results:
             return []
 
@@ -481,7 +508,9 @@ class MonteCarloAgent(BaseAgent):
                choice=(f"{best[0].combo_type.name}" if best[0] else "PASS"),
                choice_cards=choice_cards,
                choice_win_rate=round(best_wr, 3),
-               elapsed_ms=round(elapsed, 1))
+               elapsed_ms=round(elapsed, 1),
+               timed_out=timed_out,
+               samples_done=sum(1 for _ in results))
         if best[0] is None:
             return []
         return list(best[0].cards)
@@ -539,8 +568,9 @@ class MonteCarloAgent(BaseAgent):
 
         my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
 
-        # Simulate remainder using fast-but-smart agents
-        agents = [_FastSimAgent() for _ in range(4)]
+        # Simulate remainder using configured simulation model
+        sim_agent = self._make_sim_agent(my_id)
+        agents = [sim_agent for _ in range(4)]
 
         for _ in range(200):  # safety limit
             if len(sim_state.finished_positions) >= 3:
@@ -557,10 +587,13 @@ class MonteCarloAgent(BaseAgent):
 
             current = _next_active_player(sim_state, sim_state.current_player)
             agent = agents[current]
-            # Create a PlayerView for the simulation agent
-            sim_view = PlayerView(sim_state, current)
             sim_hand = sim_state.hands[current]
-            play_cards = agent.choose_play(sim_view)
+            # InformedAgent needs full state; others use PlayerView
+            if isinstance(agent, InformedAgent):
+                play_cards = agent.choose_play_full(sim_state, current)
+            else:
+                sim_view = PlayerView(sim_state, current)
+                play_cards = agent.choose_play(sim_view)
 
             # Validate
             rules = RulesEngine(sim_state.level)
@@ -595,6 +628,13 @@ class MonteCarloAgent(BaseAgent):
             first_team = {0: 0, 1: 1, 2: 0, 3: 1}[first]
             return first_team == my_team
         return False
+
+    def _make_sim_agent(self, player_id=None):
+        """Create a simulation agent based on config."""
+        from .registry import create_simulation_agent
+        if self._config:
+            return create_simulation_agent(self._config, player_id)
+        return InformedAgent()
 
 
 # ==================================================================
@@ -696,6 +736,188 @@ def _select_diverse_candidates(candidates: List[Combo], limit: int) -> List[Comb
                 result.append(c)
                 seen_ranks.add(c.main_rank)
     return result[:limit]
+
+
+# ==================================================================
+# ==================================================================
+# InformedAgent — simulation-only, exploits known opponent hands, no tunable weights
+# ==================================================================
+
+class InformedAgent(BaseAgent):
+    """Informed agent for MC simulations — exploits known opponent hands.
+
+    No tunable weights — checks who can beat what directly.
+    """
+
+    def choose_play(self, view: PlayerView) -> List[Card]:
+        # Fallback: shouldn't be called directly
+        return self.choose_play_full(view._state, view.player_id)
+
+    def choose_play_full(self, state: GameState, player_id: int) -> List[Card]:
+        hand = state.hands[player_id]
+        table = state.table
+        level = state.level
+        finder = ComboFinder(hand, level)
+
+        # Team mapping
+        my_team = {0: 0, 1: 1, 2: 0, 3: 1}[player_id]
+        partner = (player_id + 2) % 4
+
+        # Generate candidates
+        if table.is_empty or table.last_played_player == player_id:
+            candidates = _generate_lead_candidates(finder, hand)
+            table_combo = None
+        else:
+            candidates = _enumerate_responses(hand, table.current_combo, finder, level)
+            table_combo = table.current_combo
+
+        can_pass = table_combo is not None and table.last_played_player != player_id
+
+        best = None
+        best_score = float('-inf')
+
+        for c in candidates:
+            s = self._score_full_info(c, hand, state, player_id, my_team, partner)
+            if s > best_score:
+                best_score = s
+                best = c
+
+        # Pass decision
+        if can_pass:
+            pass_score = self._score_pass(state, player_id, my_team)
+            if pass_score >= best_score or best is None:
+                return []
+
+        if best is not None:
+            return list(best.cards)
+        if hand:
+            return [hand[0]]
+        return []
+
+    def _score_full_info(self, candidate: Combo, hand: Tuple[Card, ...],
+                         state: GameState, player_id: int,
+                         my_team: int, partner: int) -> float:
+        """Score a candidate using full known information. No tunable weights."""
+        level = state.level
+
+        # 1. My rounds saved
+        rounds_me_before = estimate_rounds_for_player(state, player_id)
+        hand_after = _remove_cards(hand, candidate.cards)
+        rounds_me_after = estimate_rounds_given_hand(hand_after, state, player_id)
+        my_rounds_saved = rounds_me_before - rounds_me_after
+
+        # 2. Can the next active player beat this? (deterministic: we know their hand)
+        next_player = _next_active_player(state, (player_id + 1) % 4)
+        can_be_beaten_by = []
+        cannot_be_beaten_by = []
+        for p in range(4):
+            if p == player_id or p in state.finished_positions:
+                continue
+            if _can_player_beat(state, p, candidate):
+                can_be_beaten_by.append(p)
+            else:
+                cannot_be_beaten_by.append(p)
+
+        # 3. Team vs opponent rounds impact
+        team_rounds = 0
+        opp_rounds = 0
+        for p in range(4):
+            if p in state.finished_positions:
+                continue
+            r = estimate_rounds_for_player(state, p)
+            if {0: 0, 1: 1, 2: 0, 3: 1}[p] == my_team:
+                team_rounds += r
+            else:
+                opp_rounds += r
+
+        # 4. Score
+        score = my_rounds_saved * 5.0
+
+        # If no one can beat it → huge bonus (I keep control)
+        if not can_be_beaten_by:
+            score += 8.0
+        else:
+            # Someone will beat it → small penalty
+            # If it's a teammate who beats it, that's fine
+            teammates_beating = [p for p in can_be_beaten_by
+                                if {0: 0, 1: 1, 2: 0, 3: 1}[p] == my_team]
+            if teammates_beating:
+                score += 2.0  # teammate can cover
+            else:
+                score -= 3.0  # opponent will take control
+
+        # 5. Bomb usage
+        if candidate.is_bomb:
+            table_combo = state.table.current_combo
+            if table_combo is None:
+                score -= 5.0
+            elif not table_combo.is_bomb:
+                # Quick check: does hand have any non-bomb that beats the table?
+                finder = ComboFinder(hand, state.level)
+                resp = finder.pick_response(table_combo)
+                if resp and not resp.is_bomb:
+                    score -= 4.0  # have cheaper option
+
+        # 6. Team rounds advantage
+        rounds_diff = opp_rounds - team_rounds
+        score += rounds_diff * 1.0
+
+        return score
+
+    def _score_pass(self, state: GameState, player_id: int, my_team: int) -> float:
+        """Score the pass option."""
+        # Passing is neutral for my rounds
+        # It might help if a teammate can take control
+        table_combo = state.table.current_combo
+        if table_combo is None:
+            return 0.0
+
+        # Check if a teammate can beat the current combo
+        partner = (player_id + 2) % 4
+        for p in [partner]:
+            if p not in state.finished_positions:
+                if _can_player_beat(state, p, table_combo):
+                    return 3.0  # teammate can handle it
+
+        # Check if any opponent can beat it (they already have control)
+        last_player = state.table.last_played_player
+        if {0: 0, 1: 1, 2: 0, 3: 1}.get(last_player) == my_team:
+            return 2.0  # my team already has control, passing is fine
+
+        return 0.0  # neutral
+
+
+# ==================================================================
+# Perfect-info helpers
+# ==================================================================
+
+def _remove_cards(hand: Tuple[Card, ...], cards: Tuple[Card, ...]) -> Tuple[Card, ...]:
+    ids = {c.id for c in cards}
+    return tuple(c for c in hand if c.id not in ids)
+
+
+def estimate_rounds_for_player(state: GameState, player_id: int) -> int:
+    """Fast round estimate: ~hand_size/2 (most combos are 2+ cards)."""
+    return max(1, len(state.hands[player_id]) // 2)
+
+
+def estimate_rounds_given_hand(hand: Tuple[Card, ...], state: GameState,
+                               player_id: int = 0) -> int:
+    """Fast round estimate for a specific hand."""
+    return max(0, len(hand) // 2)
+
+
+def _can_player_beat(state: GameState, player_id: int, combo: Combo) -> bool:
+    """Check if a player can beat a given combo (full information)."""
+    from ..combo_finder import ComboFinder
+    from ..combo_compare import can_beat
+    hand = state.hands[player_id]
+    finder = ComboFinder(hand, state.level)
+    resp = finder.pick_response(combo)
+    if resp and can_beat(resp, combo):
+        return True
+    bomb = finder._find_any_bomb()
+    return bomb is not None and can_beat(bomb, combo)
 
 
 # ==================================================================
