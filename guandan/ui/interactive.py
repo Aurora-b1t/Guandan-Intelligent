@@ -40,13 +40,12 @@ class InteractiveGame:
         self._winning_team: Optional[int] = None
         self._message = ""
         self._ai_running = False
+        # Accumulated trick history across tricks within a round
+        self._acc_trick_history: list = []
         # AI config
         from ..ai.registry import DEFAULT_CONFIG
-        self.config = dict(DEFAULT_CONFIG)
-        self.config["global_params"] = dict(DEFAULT_CONFIG["global_params"])
-        self.config["players"] = {
-            p: dict(cfg) for p, cfg in DEFAULT_CONFIG["players"].items()
-        }
+        import copy
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
         self._auto_play = False
         self._game_started = False
         self._human_win_rate = None
@@ -132,6 +131,7 @@ class InteractiveGame:
         self.round_number += 1
         round_level = self.team_levels[0]  # level for card play is shared
         self.rules = RulesEngine(round_level)
+        self._acc_trick_history = []  # reset accumulated history for new round
 
         deck = Deck.shuffle(Deck.create())
         hands = Deck.deal(deck)
@@ -151,7 +151,6 @@ class InteractiveGame:
             trick_number=0,
         )
 
-        # If human is not the starter, auto-play until human's turn
         # Don't auto-start AI — wait for "开始游戏" button
         self._game_started = False
         self._ai_running = False
@@ -206,6 +205,7 @@ class InteractiveGame:
             self._ai_running = False
             return
         if len(self.state.finished_positions) >= 3:
+            self._finish_round()
             self._ai_running = False
             return
 
@@ -233,6 +233,7 @@ class InteractiveGame:
                 # Human slot is AI-controlled — keep running
                 self._ai_play(self.HUMAN_ID)
                 if len(self.state.finished_positions) >= 3:
+                    self._finish_round()
                     self._ai_running = False
                 return
             else:
@@ -244,6 +245,7 @@ class InteractiveGame:
         self._ai_play(current)
 
         if len(self.state.finished_positions) >= 3:
+            self._finish_round()
             self._ai_running = False
             return
 
@@ -315,6 +317,8 @@ class InteractiveGame:
 
     def _start_new_trick(self):
         """Start a new trick with the appropriate leader."""
+        # Save current trick history before clearing
+        self._acc_trick_history.extend(self.state.table.trick_history)
         leader = self._next_active_player(self.state.current_player)
         self.state.table.reset_for_new_trick(leader)
         self.state.trick_number += 1
@@ -491,9 +495,10 @@ class InteractiveGame:
         else:
             msg = "等待AI出牌..."
 
-        # Trick history (all plays/passes in the current trick)
+        # Trick history — accumulated across tricks within a round
         trick_history = []
-        for pid, combo in self.state.table.trick_history:
+        all_entries = self._acc_trick_history + list(self.state.table.trick_history)
+        for pid, combo in all_entries:
             if combo is None:
                 trick_history.append({"player": pid, "pass": True})
             else:

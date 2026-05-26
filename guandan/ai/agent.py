@@ -17,7 +17,7 @@ import random
 import time
 from typing import List, Optional, Tuple
 
-from ..card import Card, Rank
+from ..card import Card, Rank, effective_rank
 from ..combo import Combo, ComboType
 from ..combo_finder import ComboFinder
 from ..combo_compare import can_beat
@@ -54,92 +54,101 @@ def _enumerate_responses(hand: Tuple[Card, ...], table_combo: Combo,
     normals = [c for c in hand if not c.is_wild(level)]
 
     if ct.name == 'SINGLE':
-        t_rank = table_combo.main_rank.value
+        t_eff = effective_rank(table_combo.main_rank, level)
         count = 0
-        for c in sorted(hand, key=lambda x: x.rank.value):
-            if c.rank.value > t_rank:
+        for c in sorted(hand, key=lambda x: effective_rank(x.rank, level)):
+            if effective_rank(c.rank, level) > t_eff:
                 parsed = parser.parse([c])
                 if parsed: candidates.append(parsed); count += 1
                 if count >= 5: break  # limit: 5 singles max
     elif ct.name == 'PAIR':
-        t_rank = table_combo.main_rank.value
+        t_eff = effective_rank(table_combo.main_rank, level)
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
         count = 0
-        for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
-            if rank.value > t_rank and len(cards) >= 2:
+        for rank, cards in sorted(by_rank.items(), key=lambda x: effective_rank(x[0], level)):
+            if effective_rank(rank, level) > t_eff and len(cards) >= 2:
                 parsed = parser.parse(list(cards[:2]))
                 if parsed: candidates.append(parsed); count += 1
                 if count >= 4: break
     elif ct.name == 'TRIPLE':
-        t_rank = table_combo.main_rank.value
+        t_eff = effective_rank(table_combo.main_rank, level)
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
         count = 0
-        for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
-            if rank.value > t_rank and len(cards) >= 3:
+        for rank, cards in sorted(by_rank.items(), key=lambda x: effective_rank(x[0], level)):
+            if effective_rank(rank, level) > t_eff and len(cards) >= 3:
                 parsed = parser.parse(list(cards[:3]))
                 if parsed: candidates.append(parsed); count += 1
                 if count >= 3: break
     elif ct.name in ('TRIPLE_SINGLE', 'TRIPLE_PAIR'):
         side = 1 if ct.name == 'TRIPLE_SINGLE' else 2
-        t_rank = table_combo.main_rank.value
+        t_eff = effective_rank(table_combo.main_rank, level)
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
         for rank, cards in by_rank.items():
-            if rank.value > t_rank and len(cards) >= 3:
+            if effective_rank(rank, level) > t_eff and len(cards) >= 3:
                 others = [c for r2, cs in by_rank.items() if r2 != rank for c in cs]
                 if len(others) >= side:
                     parsed = parser.parse(list(cards[:3]) + others[:side])
                     if parsed: candidates.append(parsed)
     elif ct.name in ('STRAIGHT', 'STRAIGHT_FLUSH'):
-        length = table_combo.length
-        t_end = table_combo.main_rank.value
-        for end in range(t_end + 1, 15):
-            start = end - length + 1
-            if start < 3: continue
-            needed = 0; subset = []
-            for rv in range(start, end + 1):
-                matches = [c for c in normals if c.rank.value == rv]
-                if matches: subset.append(matches[0])
-                else: needed += 1
-            if needed == len(wilds) and len(subset) + needed == length:
-                parsed = parser.parse(subset + wilds)
-                if parsed: candidates.append(parsed)
+        if effective_rank(table_combo.main_rank, level) >= 15:
+            pass  # level card or joker: no same-type response possible
+        else:
+            length = table_combo.length
+            t_end = table_combo.main_rank.value
+            for end in range(t_end + 1, 15):
+                start = end - length + 1
+                if start < 3: continue
+                needed = 0; subset = []
+                for rv in range(start, end + 1):
+                    matches = [c for c in normals if c.rank.value == rv]
+                    if matches: subset.append(matches[0])
+                    else: needed += 1
+                if needed == len(wilds) and len(subset) + needed == length:
+                    parsed = parser.parse(subset + wilds)
+                    if parsed: candidates.append(parsed)
     elif ct.name == 'CONSECUTIVE_PAIRS':
-        num_pairs = table_combo.length // 2
-        t_end = table_combo.main_rank.value
-        by_rank: dict = {}
-        for c in normals: by_rank.setdefault(c.rank, []).append(c)
-        for end in range(t_end + 1, 15):
-            start = end - num_pairs + 1
-            if start < 3: continue
-            needed = 0; subset = []
-            for rv in range(start, end + 1):
-                cs = by_rank.get(Rank(rv), [])
-                available = min(len(cs), 2)
-                subset.extend(cs[:available])
-                needed += max(0, 2 - available)
-            if needed == len(wilds):
-                parsed = parser.parse(subset + wilds)
-                if parsed: candidates.append(parsed)
+        if effective_rank(table_combo.main_rank, level) >= 15:
+            pass
+        else:
+            num_pairs = table_combo.length // 2
+            t_end = table_combo.main_rank.value
+            by_rank: dict = {}
+            for c in normals: by_rank.setdefault(c.rank, []).append(c)
+            for end in range(t_end + 1, 15):
+                start = end - num_pairs + 1
+                if start < 3: continue
+                needed = 0; subset = []
+                for rv in range(start, end + 1):
+                    cs = by_rank.get(Rank(rv), [])
+                    available = min(len(cs), 2)
+                    subset.extend(cs[:available])
+                    needed += max(0, 2 - available)
+                if needed == len(wilds):
+                    parsed = parser.parse(subset + wilds)
+                    if parsed: candidates.append(parsed)
     elif ct.name == 'CONSECUTIVE_TRIPLES':
-        num_triples = table_combo.length // 3
-        t_end = table_combo.main_rank.value
-        by_rank: dict = {}
-        for c in normals: by_rank.setdefault(c.rank, []).append(c)
-        for end in range(t_end + 1, 15):
-            start = end - num_triples + 1
-            if start < 3: continue
-            needed = 0; subset = []
-            for rv in range(start, end + 1):
-                cs = by_rank.get(Rank(rv), [])
-                available = min(len(cs), 3)
-                subset.extend(cs[:available])
-                needed += max(0, 3 - available)
-            if needed == len(wilds):
-                parsed = parser.parse(subset + wilds)
-                if parsed: candidates.append(parsed)
+        if effective_rank(table_combo.main_rank, level) >= 15:
+            pass
+        else:
+            num_triples = table_combo.length // 3
+            t_end = table_combo.main_rank.value
+            by_rank: dict = {}
+            for c in normals: by_rank.setdefault(c.rank, []).append(c)
+            for end in range(t_end + 1, 15):
+                start = end - num_triples + 1
+                if start < 3: continue
+                needed = 0; subset = []
+                for rv in range(start, end + 1):
+                    cs = by_rank.get(Rank(rv), [])
+                    available = min(len(cs), 3)
+                    subset.extend(cs[:available])
+                    needed += max(0, 3 - available)
+                if needed == len(wilds):
+                    parsed = parser.parse(subset + wilds)
+                    if parsed: candidates.append(parsed)
     else:
         resp = finder.pick_response(table_combo)
         if resp: candidates.append(resp)

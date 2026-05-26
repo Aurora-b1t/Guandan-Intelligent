@@ -11,6 +11,7 @@ Comparison hierarchy:
 
 from __future__ import annotations
 
+from .card import effective_rank
 from .combo import Combo, ComboType
 
 
@@ -43,7 +44,9 @@ def can_beat(new: Combo, existing: Combo) -> bool:
         if new.length != existing.length:
             return False
 
-    return new.main_rank > existing.main_rank
+    new_eff = effective_rank(new.main_rank, new.level)
+    exist_eff = effective_rank(existing.main_rank, existing.level)
+    return new_eff > exist_eff
 
 
 def _compare_bombs(a: Combo, b: Combo) -> int:
@@ -51,5 +54,7 @@ def _compare_bombs(a: Combo, b: Combo) -> int:
     # Different sizes: more cards = bigger bomb
     if a.length != b.length:
         return a.length - b.length
-    # Same size: compare rank
-    return a.main_rank.value - b.main_rank.value
+    # Same size: compare effective rank (level-aware)
+    a_eff = effective_rank(a.main_rank, a.level)
+    b_eff = effective_rank(b.main_rank, b.level)
+    return a_eff - b_eff

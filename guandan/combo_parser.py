@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import List, Optional, Tuple
 
-from .card import Card, Rank, Suit
+from .card import Card, Rank, Suit, effective_rank
 from .combo import Combo, ComboType
 
 
@@ -83,6 +83,7 @@ class ComboParser:
                 cards=tuple(sorted(all_cards, key=lambda c: c.rank)),
                 main_rank=Rank.BIG_JOKER,
                 length=4,
+                level=self.level,
             )
         return None
 
@@ -139,6 +140,7 @@ class ComboParser:
             main_rank=rank,
             length=total,
             wild_indices=wild_indices,
+            level=self.level,
         )
 
     def _try_consecutive_triples(self, normals: List[Card], wilds: List[Card], wild_count: int) -> Optional[Combo]:
@@ -211,6 +213,7 @@ class ComboParser:
             main_rank=rank,
             length=1,
             wild_indices=wild_indices,
+            level=self.level,
         )
 
     # ------------------------------------------------------------------
@@ -252,6 +255,7 @@ class ComboParser:
             main_rank=main_rank,
             length=required,
             wild_indices=wild_indices,
+            level=self.level,
         )
 
     def _try_triple_side(
@@ -321,6 +325,7 @@ class ComboParser:
                 secondary_rank=side_rank,
                 side_type='single' if side_size == 1 else 'pair',
                 wild_indices=wild_indices,
+                level=self.level,
             )
 
         # Try wilds forming the triple entirely (no normal triple rank)
@@ -372,8 +377,9 @@ class ComboParser:
                     length=length,
                     suit=suit,
                     wild_indices=wild_indices,
+                    level=self.level,
                 )
-                if best is None or candidate.main_rank > best.main_rank:
+                if best is None or effective_rank(candidate.main_rank, self.level) > effective_rank(best.main_rank, self.level):
                     best = candidate
 
         return best
@@ -430,8 +436,9 @@ class ComboParser:
                     main_rank=Rank(end),
                     length=num_groups * per_group,
                     wild_indices=wild_indices,
+                    level=self.level,
                 )
-                if best is None or candidate.main_rank > best.main_rank:
+                if best is None or effective_rank(candidate.main_rank, self.level) > effective_rank(best.main_rank, self.level):
                     best = candidate
 
         return best

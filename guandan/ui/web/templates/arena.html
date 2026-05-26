@@ -1,277 +1,221 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 测试场 — 掼蛋</title>
 <style>
-  :root { --bg: #1a1a2e; --accent: #daa520; --text: #ddd; --card-bg: #fffef5; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: "Microsoft YaHei", sans-serif; }
-  #app { max-width: 1100px; margin: 0 auto; padding: 12px 20px; }
+:root{--bg:#1a1a2e;--accent:#daa520;--text:#ddd}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:"Microsoft YaHei",sans-serif}
+#app{max-width:1200px;margin:0 auto;padding:10px 16px}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.header h1{color:var(--accent);font-size:1.2em}
+.header a{color:#888;font-size:0.85em}
+.tabs{display:flex;gap:4px;margin-bottom:8px}
+.tab-btn{background:#333;color:#999;border:none;padding:5px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-size:0.85em}
+.tab-btn.active{background:#444;color:#fff}
+.panel{background:rgba(255,255,255,0.04);border-radius:10px;padding:10px;margin-bottom:8px;display:none}
+.panel.show{display:block}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+select,input[type=number]{background:#222;color:#ddd;border:1px solid #444;padding:4px 8px;border-radius:4px;font-size:0.85em}
+button{padding:5px 14px;border:none;border-radius:5px;cursor:pointer;font-size:0.85em;color:#fff}
+.btn-go{background:#27ae60}.btn-go2{background:#2980b9}.btn-warn{background:#c0392b}.btn-gray{background:#555}
+.btn-sm{font-size:0.75em;padding:3px 8px}
 
-  .header { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-  .header h1 { color: var(--accent); font-size: 1.3em; }
-  .header a { color: #888; font-size: 0.85em; }
+.scenario-card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:6px 10px;margin-bottom:4px;cursor:pointer;transition:border-color .15s}
+.scenario-card:hover{border-color:var(--accent)}
+.scenario-card .cat{font-size:0.7em;padding:1px 6px;border-radius:3px;background:#333;color:#999;margin-right:4px}
+.scenario-card .name{font-weight:bold;font-size:0.9em}
+.scenario-card .desc{font-size:0.75em;color:#999;margin-top:1px}
 
-  .panel { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.profile-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:6px}
+.profile-row label{font-size:0.85em;color:#aaa;min-width:80px}
+.profile-row .name{color:var(--accent);font-weight:bold;font-size:0.9em;min-width:100px}
 
-  /* Config row */
-  .config-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-  .config-row label { font-size: 0.85em; color: #aaa; }
-  .config-row input, .config-row select {
-    background: #222; color: #ddd; border: 1px solid #444;
-    padding: 4px 8px; border-radius: 4px; font-size: 0.85em;
-  }
-  .config-row button {
-    padding: 5px 14px; border: none; border-radius: 5px;
-    cursor: pointer; font-size: 0.85em; color: #fff;
-  }
-  .btn-primary { background: #27ae60; }
-  .btn-secondary { background: #555; }
-  .btn-warn { background: #c0392b; }
-
-  /* Cards display */
-  .card-row { display: flex; gap: 3px; flex-wrap: wrap; align-items: center; }
-  .card-mini {
-    display: inline-flex; flex-direction: column; align-items: center;
-    width: 42px; height: 58px; background: var(--card-bg);
-    border: 1px solid #c8b898; border-radius: 4px;
-    font-weight: bold; cursor: pointer; user-select: none;
-    position: relative; font-size: 0.7em;
-  }
-  .card-mini .rank { position: absolute; top: 1px; left: 3px; font-size: 0.85em; }
-  .card-mini .suit { font-size: 1.1em; }
-  .card-mini:hover { transform: translateY(-3px); box-shadow: 0 3px 10px rgba(0,0,0,0.3); }
-  .card-mini.selected { border-color: #f1c40f; box-shadow: 0 0 8px rgba(241,196,15,0.5); }
-  .card-mini.removed { opacity: 0.25; }
-  .suit-S { color: #2c3e50; } .suit-H { color: #c0392b; }
-  .suit-D { color: #2980b9; } .suit-C { color: #27ae60; }
-  .suit-NONE { color: #888; }
-  .joker-red { color: #c0392b; background: #fff0f0; }
-  .joker-black { color: #2c3e50; background: #f0f0f0; }
-  .wild { box-shadow: 0 0 5px #ff6b9d; border-color: #ff6b9d; }
-
-  /* Results table */
-  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
-  th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
-  th { color: #999; font-weight: normal; font-size: 0.8em; }
-  .score-pos { color: #27ae60; } .score-neg { color: #e74c3c; }
-  .best-row { background: rgba(39,174,96,0.1); }
-  .best-row td { font-weight: bold; color: #27ae60; }
-
-  .section-title { font-size: 0.85em; color: var(--accent); margin-bottom: 6px; }
-
-  /* AI log entries */
-  .log-entry { font-size: 0.78em; color: #aaa; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
-  .log-entry .label { color: #888; }
-
-  /* Preset buttons */
-  .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-  .preset-btn { padding: 3px 10px; font-size: 0.75em; border: 1px solid #555; border-radius: 4px; background: #333; color: #ccc; cursor: pointer; }
-  .preset-btn:hover { border-color: var(--accent); }
+table{width:100%;border-collapse:collapse;font-size:0.82em}
+th,td{padding:4px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.05)}
+th{color:#999;font-weight:normal;font-size:0.78em}
+.correct{color:#27ae60;font-weight:bold}.wrong{color:#e74c3c}
+.best-row{background:rgba(39,174,96,0.1)}.best-row td{color:#27ae60;font-weight:bold}
+.section-title{font-size:0.85em;color:var(--accent);margin-bottom:4px}
 </style>
 </head>
 <body>
 <div id="app">
-  <div class="header">
-    <h1>AI 测试场</h1>
-    <a href="/">← 主菜单</a> <a href="/game">対战</a>
-  </div>
+<div class="header"><h1>AI 测试场</h1><a href="/">主菜单</a><a href="/game">対战</a></div>
 
-  <!-- Presets -->
-  <div class="panel">
-    <div class="section-title">预设场景</div>
-    <div class="preset-row">
-      <button class="preset-btn" onclick="loadPreset('bomb')">手牌含炸弹</button>
-      <button class="preset-btn" onclick="loadPreset('straight')">手牌含顺子</button>
-      <button class="preset-btn" onclick="loadPreset('scattered')">散牌开局</button>
-      <button class="preset-btn" onclick="loadPreset('endgame')">残局：大牌抉择</button>
-      <button class="preset-btn" onclick="loadPreset('jokers')">含王牌</button>
-      <button class="preset-btn" onclick="loadPreset('random')">随机手牌</button>
-    </div>
-  </div>
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('scenarios')">场景库</button>
+  <button class="tab-btn" onclick="switchTab('compare')">模型对比</button>
+  <button class="tab-btn" onclick="switchTab('bench')">批量基准</button>
+</div>
 
-  <!-- Configuration -->
-  <div class="panel">
-    <div class="section-title">场景配置</div>
-    <div class="config-row">
-      <label>等级:</label>
-      <input type="number" id="level" value="2" min="2" max="14" style="width:50px">
-      <label>情景:</label>
-      <select id="scenario"><option value="lead">首家出牌</option><option value="respond">跟牌</option></select>
-      <button class="btn-primary" onclick="analyze()">分析</button>
-      <button class="btn-secondary" onclick="addRandomCards()">随机加牌</button>
-      <button class="btn-warn" onclick="clearAll()">清空</button>
-    </div>
-  </div>
+<!-- Scenarios -->
+<div class="panel show" id="tab-scenarios">
+  <div class="row"><select id="cat-filter" onchange="loadScenarios()"></select><button class="btn-go" onclick="loadScenarios()">刷新</button></div>
+  <div id="scenario-list"></div>
+</div>
 
-  <!-- Hand + Table -->
-  <div class="panel">
-    <div class="section-title">手牌 <span id="hand-count" style="color:#888">(0张)</span></div>
-    <div class="card-row" id="hand-cards"></div>
-  </div>
-  <div class="panel" id="table-panel">
-    <div class="section-title">牌桌 <span id="table-count" style="color:#888">(空)</span></div>
-    <div class="card-row" id="table-cards"></div>
-  </div>
+<!-- Compare -->
+<div class="panel" id="tab-compare">
+  <div class="row"><span style="color:#aaa">场景:</span><select id="cmp-scenario" onchange="updateCategoryUI()"></select><button class="btn-go2" onclick="runCompare()">对比</button></div>
+  <div id="inner-compare" style="display:none"><div class="section-title">内层模型（确定推演 — 直接使用已知手牌）</div><div id="inner-checks-compare"></div></div>
+  <div id="profiles-compare"></div>
+  <div class="row"><button class="btn-gray btn-sm" onclick="addProfile('compare')">+ 添加配置</button></div>
+  <div id="compare-results"></div>
+</div>
 
-  <!-- Explanation -->
-  <div class="panel" style="font-size:0.82em;color:#aaa;line-height:1.6">
-    <div class="section-title">评分逻辑</div>
-    <b>效率分</b> = 出牌张数/手牌张数 × 20 &nbsp;|&nbsp;
-    <b>结构分</b> = 出牌后手牌质量变化 &nbsp;|&nbsp;
-    <b>位置分</b> = 首家+1 / 跟牌+1.5 / 炸弹压非炸弹-3(好牌时)
-    <br>评分最高 = 最优选择（绿色行）。负分牌型通常不如过牌。
-  </div>
-
-  <!-- Results -->
-  <div class="panel" id="results-panel" style="display:none">
-    <div class="section-title">手牌评分: <span id="hand-score">-</span></div>
-    <table id="results-table">
-      <thead><tr><th>牌型</th><th>牌面</th><th>张数</th><th>主牌</th><th>炸弹</th><th>评分</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-
-  <!-- AI Log -->
-  <div class="panel" id="log-panel" style="display:none">
-    <div class="section-title">AI 决策日志</div>
-    <div id="log-content"></div>
-  </div>
+<!-- Benchmark -->
+<div class="panel" id="tab-bench">
+  <div class="row"><span style="color:#aaa">分类:</span><select id="bench-cat" onchange="updateBenchInner()"></select><button class="btn-warn" onclick="runBenchmark()">跑基准</button></div>
+  <div id="inner-bench" style="display:none"><div class="section-title">内层模型</div><div id="inner-checks-bench"></div></div>
+  <div id="profiles-bench"></div>
+  <div class="row"><button class="btn-gray btn-sm" onclick="addProfile('bench')">+ 添加配置</button></div>
+  <div id="bench-summary"></div><div id="bench-results"></div>
+</div>
 </div>
 
 <script>
-let handCards = [];
-let tableCards = [];
-let selectedFor = 'hand'; // 'hand' or 'table'
+let schema={}, scenarios=[], categories=[], activeTab='scenarios';
+let profilesCompare=[], profilesBench=[];
 
-const SUIT_CHARS = {0:'♣',1:'♦',2:'♥',3:'♠',4:''};
-const SUIT_NAMES = {0:'C',1:'D',2:'H',3:'S',4:''};
+const PRESETS=[
+  {name:"MC+Informed+Full",decider:"mc",sampler:"random",inner:"informed",enumerator:"full",num_samples:50,time_limit_ms:5000},
+  {name:"MC+Round+Full",decider:"mc",sampler:"random",inner:"round",enumerator:"full",num_samples:50,time_limit_ms:5000},
+  {name:"MC+Informed+Top5",decider:"mc",sampler:"random",inner:"informed",enumerator:"top_n",top_n:5,num_samples:50,time_limit_ms:5000},
+  {name:"Blind默认",decider:"blind"},
+  {name:"Informed直接",decider:"informed"},
+  {name:"Round直接",decider:"round"},
+  {name:"MC+Blind+Full",decider:"mc",sampler:"random",inner:"blind",enumerator:"full",num_samples:50,time_limit_ms:5000},
+];
 
-function cardHTML(c, id) {
-  const suitCls = c.is_joker ? (c.rank_name==='SJ'?'joker-black':'joker-red') : ('suit-'+SUIT_NAMES[c.suit]);
-  const wild = c.is_wild ? ' wild' : '';
-  return `<div class="card-mini ${suitCls}${wild}" data-id="${id}" onclick="toggleCard(${id})">
-    <span class="rank">${c.rank_name}</span><span class="suit">${SUIT_CHARS[c.suit]}</span>
-  </div>`;
+async function init(){
+  const [sr, cr]=await Promise.all([fetch('/api/arena/scenarios').then(r=>r.json()),fetch('/api/config').then(r=>r.json())]);
+  scenarios=sr.scenarios; categories=sr.categories; schema=cr.schema||{};
+  document.getElementById('cat-filter').innerHTML='<option value="">全部分类</option>'+categories.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('bench-cat').innerHTML='<option value="">全部</option>'+categories.map(c=>`<option value="${c}">${c}</option>`).join('');
+  loadScenarios();
+  profilesCompare=PRESETS.map(p=>({...p}));
+  profilesBench=PRESETS.map(p=>({...p}));
+  renderProfiles('compare'); renderProfiles('bench');
 }
 
-async function loadPreset(name) {
-  if (name === 'random') {
-    const r = await fetch('/api/arena/random_hand', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:12})});
-    const d = await r.json();
-    handCards = d.hand_ids;
-    tableCards = [];
-    renderAll();
-    return;
-  }
-  // Hardcoded presets using card IDs
-  const presets = {
-    bomb: { hand: [0,54,13,67, 26,80, 1,55, 3,57], table: [], desc: '含炸弹的手牌' },
-    straight: { hand: [39,40,41,42,43, 10,64], table: [], desc: '含顺子的手牌' },
-    scattered: { hand: [0,13,26,39,1,14,27,40,2,15,28,41], table: [], desc: '散牌' },
-    endgame: { hand: [0,54,13,67, 39,40,41,42,43, 100,101], table: [5], desc: '残局：大牌vs炸弹' },
-    jokers: { hand: [52,53,106,107, 39,40,41,42,43], table: [], desc: '含四张王' },
-  };
-  const p = presets[name];
-  if (p) { handCards = p.hand || []; tableCards = p.table || []; renderAll(); }
+function switchTab(t){activeTab=t;document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.textContent.includes(t==='scenarios'?'场景':t==='compare'?'对比':'基准')));['scenarios','compare','bench'].forEach(x=>document.getElementById('tab-'+x).classList.toggle('show',x===t));}
+
+async function loadScenarios(){
+  const cat=document.getElementById('cat-filter').value,url=cat?`/api/arena/scenarios?category=${cat}`:'/api/arena/scenarios';
+  const d=await (await fetch(url)).json();
+  const cn={deduction:'确定推演(内层模型)',sampling:'不确定采样(外层模型)',endgame:'残局求解(外层模型)',opening:'开局评估(外层模型)'};
+  document.getElementById('scenario-list').innerHTML=(d.scenarios||[]).map(s=>`<div class="scenario-card" onclick="alert('${s.name}: ${s.description}')"><span class="cat">${cn[s.category]||s.category}</span><span class="name">${s.name}</span><div class="desc">${s.description}</div></span></div>`).join('');
+  document.getElementById('cmp-scenario').innerHTML=scenarios.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  // Show/hide profile sections based on selected category
+  updateCategoryUI();
 }
-
-async function addRandomCards() {
-  const r = await fetch('/api/arena/random_hand', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:5})});
-  const d = await r.json();
-  handCards = handCards.concat(d.hand_ids);
-  renderAll();
-}
-
-function clearAll() { handCards = []; tableCards = []; renderAll(); }
-
-function toggleCard(id) {
-  const inHand = handCards.includes(id);
-  const inTable = tableCards.includes(id);
-  if (inHand) { handCards = handCards.filter(x => x !== id); if (tableCards.length < 8) tableCards.push(id); }
-  else if (inTable) { tableCards = tableCards.filter(x => x !== id); handCards.push(id); }
-  renderAll();
-}
-
-async function analyze() {
-  const level = parseInt(document.getElementById('level').value) || 2;
-  const isLead = document.getElementById('scenario').value === 'lead';
-
-  const body = { hand: handCards, level, is_lead: isLead };
-  if (!isLead && tableCards.length > 0) body.table = tableCards;
-
-  const r = await fetch('/api/arena/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data = await r.json();
-
-  document.getElementById('results-panel').style.display = 'block';
-  document.getElementById('hand-score').textContent = data.hand_score;
-
-  const tbody = document.querySelector('#results-table tbody');
-  tbody.innerHTML = '';
-  let bestScore = data.candidates.length > 0 ? data.candidates[0].score : 0;
-  for (const c of data.candidates) {
-    const cls = c.score === bestScore ? 'best-row' : '';
-    const sc = c.score >= 0 ? 'score-pos' : 'score-neg';
-    tbody.innerHTML += `<tr class="${cls}">
-      <td>${c.type_cn||c.type}</td><td>${c.cards.join(' ')}</td><td>${c.length}</td>
-      <td>${c.main_rank}</td><td>${c.is_bomb?'💣':''}</td>
-      <td class="${sc}">${c.score}</td></tr>`;
-  }
-
-  // Log
-  document.getElementById('log-panel').style.display = 'block';
-  const logDiv = document.getElementById('log-content');
-  if (data.ai_log && data.ai_log.length > 0) {
-    logDiv.innerHTML = data.ai_log.map(e =>
-      `<div class="log-entry"><span class="label">[${e.type}]</span> ${JSON.stringify(e.data).substring(0,120)}</div>`
-    ).join('');
-  } else {
-    logDiv.innerHTML = '<div class="log-entry">无日志</div>';
+function updateCategoryUI(){
+  const sid=document.getElementById('cmp-scenario')?.value;
+  const s=scenarios.find(s=>s.id===sid);
+  const isDeduction=s&&s.category==='deduction';
+  document.getElementById('profiles-compare').style.display=isDeduction?'none':'block';
+  document.getElementById('inner-compare').style.display=isDeduction?'block':'none';
+  if(isDeduction){
+    const innM=(schema.inner_model||{}).models||{};
+    document.getElementById('inner-checks-compare').innerHTML=Object.entries(innM).map(([k,v])=>`<label style="margin-right:12px;font-size:0.9em"><input type="checkbox" value="${k}" checked> ${v.name}</label>`).join('');
   }
 }
 
-function renderAll() {
-  renderCards('hand-cards', handCards);
-  renderCards('table-cards', tableCards);
-  document.getElementById('hand-count').textContent = `(${handCards.length}张)`;
-  document.getElementById('table-count').textContent = tableCards.length ? `(${tableCards.length}张)` : '(空)';
+function addProfile(section){
+  const a=section==='compare'?profilesCompare:profilesBench;
+  a.push({name:"自定义"+(a.length+1),decider:"mc",sampler:"random",inner:"informed",enumerator:"full",num_samples:50,time_limit_ms:5000});
+  renderProfiles(section);
 }
 
-async function renderCards(containerId, ids) {
-  const container = document.getElementById(containerId);
-  // Fetch card info from server
-  if (ids.length === 0) { container.innerHTML = '<span style="color:#888;font-size:0.8em">点击手牌加入牌桌</span>'; return; }
-  // Build locally
-  const allCards = {};
-  for (let i = 0; i < 108; i++) {
-    const deck = Math.floor(i / 54);
-    const idx = i % 54;
-    let suit, rank, rankName;
-    if (idx < 52) {
-      suit = Math.floor(idx / 13);
-      const rv = (idx % 13) + 2;
-      rank = rv;
-      rankName = {2:'2',3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A'}[rv];
-    } else if (idx === 52) { suit=4; rank=15; rankName='SJ'; }
-    else { suit=4; rank=16; rankName='BJ'; }
-    allCards[i] = {
-      id: i, suit, rank, rank_name: rankName,
-      is_joker: rank >= 15, is_wild: (suit === 2 && rank === 2),
-      display: (['C','D','H','S',''][suit]||'') + rankName
-    };
+function removeProfile(section,i){
+  const a=section==='compare'?profilesCompare:profilesBench;
+  a.splice(i,1); renderProfiles(section);
+}
+
+function updateProfile(section,i,field,value){
+  const a=section==='compare'?profilesCompare:profilesBench;
+  a[i][field]=value; if(field==='decider'&&value==='blind'){a[i].inner='blind';}
+  renderProfiles(section);
+}
+
+function renderProfiles(section){
+  const a=section==='compare'?profilesCompare:profilesBench,el=document.getElementById('profiles-'+section);
+  const decM=(schema.decider||{}).models||{},innM=(schema.inner_model||{}).models||{},enuM=(schema.enumerator||{}).models||{};
+  let h='';
+  a.forEach((p,i)=>{
+    const isMC=p.decider==='mc';
+    h+=`<div class="profile-row">
+      <input value="${p.name}" onchange="updateProfile('${section}',${i},'name',this.value)" style="width:130px;background:#222;color:#daa520;border:1px solid #444;padding:3px 6px;border-radius:3px;font-size:0.85em">
+      <select onchange="updateProfile('${section}',${i},'decider',this.value)" style="background:#222;color:#ddd;border:1px solid #444;padding:3px 6px;border-radius:3px;font-size:0.85em">
+        ${Object.entries(decM).map(([k,v])=>`<option value="${k}" ${p.decider===k?'selected':''}>${v.name}</option>`).join('')}
+      </select>`;
+    if(isMC){
+      h+=` <label>内层:</label><select onchange="updateProfile('${section}',${i},'inner',this.value)" style="background:#222;color:#ddd;border:1px solid #444;padding:3px 6px;border-radius:3px;font-size:0.85em">
+        ${Object.entries(innM).map(([k,v])=>`<option value="${k}" ${p.inner===k?'selected':''}>${v.name}</option>`).join('')}
+      </select>
+      <label>枚举:</label><select onchange="updateProfile('${section}',${i},'enumerator',this.value)" style="background:#222;color:#ddd;border:1px solid #444;padding:3px 6px;border-radius:3px;font-size:0.85em">
+        ${Object.entries(enuM).map(([k,v])=>`<option value="${k}" ${p.enumerator===k?'selected':''}>${v.name}</option>`).join('')}
+      </select>
+      <label>采样:</label><input type="number" value="${p.num_samples||50}" onchange="updateProfile('${section}',${i},'num_samples',parseInt(this.value))" style="width:56px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px;font-size:0.85em">
+      <label>时限:</label><input type="number" value="${p.time_limit_ms||5000}" onchange="updateProfile('${section}',${i},'time_limit_ms',parseInt(this.value))" style="width:62px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px;font-size:0.85em">ms`;
+    }
+    h+=`<button class="btn-gray btn-sm" onclick="removeProfile('${section}',${i})">×</button></div>`;
+  });
+  el.innerHTML=h;
+}
+
+async function runCompare(){
+  const sid=document.getElementById('cmp-scenario').value,res=document.getElementById('compare-results');
+  res.innerHTML='<span style="color:#aaa">运行中...</span>';
+  const s=scenarios.find(s=>s.id===sid);
+  let models;
+  if(s&&s.category==='deduction'){
+    const checks=document.querySelectorAll('#inner-checks-compare input[type=checkbox]:checked');
+    models=Array.from(checks).map(c=>({id:c.value,label:c.parentElement.textContent.trim()}));
+  }else{
+    models=profilesCompare.map(p=>({id:p.decider,label:p.name}));
   }
-
-  container.innerHTML = ids.map(id => {
-    const c = allCards[id];
-    if (!c) return '';
-    return cardHTML(c, id);
-  }).join('');
+  const r=await fetch('/api/arena/compare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario_id:sid,models:models})});
+  const d=await r.json();
+  let h=`<div class="section-title">${d.scenario_name} | 预期: ${d.expected?.pass?'过牌':(d.expected?.play||[]).join(' ')}</div>`;
+  h+='<table><tr><th>模型</th><th>选择</th><th>牌面</th><th>过牌</th><th>耗时</th></tr>';
+  for(const r of d.results||[]){const c=r.choice||{};h+=`<tr><td>${r.model_name||r.model}</td><td>${c.type||'?'}</td><td>${(c.cards||[]).join(' ')}</td><td>${r.pass_chosen?'✓':''}</td><td>${(r.elapsed_ms||0).toFixed(0)}ms</td></tr>`;}
+  h+='</table>'; res.innerHTML=h;
 }
 
-// Initial load
-loadPreset('bomb');
+function updateBenchInner(){
+  const cat=document.getElementById('bench-cat').value;
+  const isDed=cat==='deduction';
+  document.getElementById('profiles-bench').style.display=isDed?'none':'block';
+  document.getElementById('inner-bench').style.display=isDed?'block':'none';
+  if(isDed){
+    const innM=(schema.inner_model||{}).models||{};
+    document.getElementById('inner-checks-bench').innerHTML=Object.entries(innM).map(([k,v])=>`<label style="margin-right:12px;font-size:0.9em"><input type="checkbox" value="${k}" checked> ${v.name}</label>`).join('');
+  }
+}
+async function runBenchmark(){
+  const cat=document.getElementById('bench-cat').value,res=document.getElementById('bench-results'),sum=document.getElementById('bench-summary');
+  res.innerHTML='<span style="color:#aaa">运行中...</span>';
+  let models;
+  if(cat==='deduction'){
+    const checks=document.querySelectorAll('#inner-checks-bench input[type=checkbox]:checked');
+    models=Array.from(checks).map(c=>({id:c.value,label:c.parentElement.textContent.trim()}));
+  }else{
+    models=profilesBench.map(p=>({id:p.decider,label:p.name}));
+  }
+  const r=await fetch('/api/arena/benchmark',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({category:cat||null,models:models})});
+  const d=await r.json();
+  let h='<div class="section-title">排行榜</div><table><tr><th>模型</th><th>准确率</th><th>正确/总数</th><th>平均耗时</th></tr>';
+  for(const s of d.summary||[])h+=`<tr><td>${s.model_name||s.model}</td><td style="color:${s.accuracy>=80?'#27ae60':'#e67e22'};font-weight:bold">${s.accuracy}%</td><td>${s.correct}/${s.total}</td><td>${s.avg_ms}ms</td></tr>`;
+  h+='</table>'; sum.innerHTML=h;
+  h='<div class="section-title" style="margin-top:8px">详情</div><table><tr><th>场景</th><th>分类</th><th>模型</th><th>选择</th><th>正确</th><th>耗时</th></tr>';
+  for(const r of d.results||[])h+=`<tr><td>${r.scenario_name}</td><td>${r.category}</td><td>${r.model_name||r.model}</td><td>${r.choice_type} ${(r.chosen_cards||[]).join(' ')}</td><td class="${r.correct?'correct':'wrong'}">${r.correct?'✓':'✗'}</td><td>${r.elapsed_ms}ms</td></tr>`;
+  h+='</table>'; res.innerHTML=h;
+}
+
+init();
 </script>
 </body>
 </html>

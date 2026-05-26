@@ -87,8 +87,8 @@ body {
   gap: 1px;
 }
 .player-zone.you   { bottom: 8px; left: 50%; transform: translateX(-50%); width: 92%; }
-.player-zone.left  { left: 8px; top: 50%; transform: translateY(-50%); max-width: 170px; }
-.player-zone.right { right: 8px; top: 50%; transform: translateY(-50%); max-width: 170px; }
+.player-zone.left  { left: 8px; top: 50%; transform: translateY(-50%); max-width: 240px; }
+.player-zone.right { right: 8px; top: 50%; transform: translateY(-50%); max-width: 240px; }
 .player-zone.partner { top: 8px; left: 50%; transform: translateX(-50%); width: 60%; }
 
 .zone-header {
@@ -109,7 +109,34 @@ body {
   display: flex; align-items: center; justify-content: center;
   gap: 2px; flex-wrap: wrap; padding: 2px 4px;
 }
-.play-display .pass-text { color: #888; font-size: 0.75em; font-style: italic; }
+
+/* Zone body: wraps play-display + debug-cards-inline per opponent zone */
+.zone-body {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 4px;
+}
+/* Side players: play slot is a fixed-width vertical strip */
+.player-zone.right .zone-body,
+.player-zone.left .zone-body {
+  flex-direction: row; align-items: center;
+}
+.player-zone.right .zone-body .play-display,
+.player-zone.left .zone-body .play-display {
+  flex-direction: column;          /* cards stack vertically */
+  width: 48px; flex-shrink: 0;     /* fixed width, won't squeeze debug hand */
+  min-height: 36px;
+  justify-content: flex-start;
+  align-items: center;
+}
+.player-zone.left .zone-body { flex-direction: row-reverse; }
+/* Partner (top): play BELOW debug (column, reorder) */
+.player-zone.partner .zone-body .play-display { order: 2; }
+
+.play-display .pass-text {
+  color: #e67e22; font-size: 0.95em; font-weight: bold;
+  background: rgba(230,126,34,0.15);
+  padding: 2px 8px; border-radius: 4px;
+}
 .play-display .combo-tag {
   background: var(--accent); color: #222;
   padding: 1px 5px; border-radius: 3px; font-size: 0.65em; white-space: nowrap;

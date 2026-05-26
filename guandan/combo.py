@@ -56,6 +56,7 @@ class Combo:
     cards: Tuple[Card, ...]
     main_rank: Rank
     length: int
+    level: int = 2
     secondary_rank: Optional[Rank] = None
     side_type: Optional[str] = None
     suit: Optional[Suit] = None

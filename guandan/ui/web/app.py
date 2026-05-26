@@ -10,14 +10,17 @@ Routes:
 Run: python -m guandan.ui.web.app
 """
 
+import json
 import os
 import uuid
 from flask import Flask, jsonify, render_template, request, session
 
 from ..interactive import InteractiveGame
+from .arena_api import arena_bp
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+app.register_blueprint(arena_bp)
 
 _games: dict = {}
 
@@ -47,7 +50,8 @@ def game_page():
     game = _get_game()
     if game.state is None:
         game.start_new_round()
-    return render_template("game.html")
+    initial_state = json.dumps(game.get_state())
+    return render_template("game.html", initial_state=initial_state)
 
 
 @app.route("/arena")
@@ -173,29 +177,21 @@ def api_config():
     if request.method == "POST":
         data = request.get_json()
         if data:
-            if "global_model" in data:
-                game.config["global_model"] = data["global_model"]
-            if "simulation_model" in data:
-                game.config["simulation_model"] = data["simulation_model"]
-            if "global_params" in data:
-                game.config["global_params"] = data["global_params"]
+            if "decider" in data:
+                game.config["decider"] = data["decider"]
+            if "inner_model" in data:
+                game.config["inner_model"] = data["inner_model"]
+            if "enumerator" in data:
+                game.config["enumerator"] = data["enumerator"]
             if "players" in data:
                 for pid, cfg in data["players"].items():
                     p = int(pid)
-                    if "model" in cfg:
-                        game.config["players"][p]["model"] = cfg["model"]
-                    if "params" in cfg:
-                        game.config["players"][p]["params"] = cfg["params"]
+                    game.config["players"][p] = cfg
             if "auto_play" in data:
                 game._auto_play = data["auto_play"]
-    from ...ai.registry import list_models, list_sim_models, get_model_defaults
-    return jsonify({
-        "config": game.config,
-        "available_models": list_models(),
-        "available_sim_models": list_sim_models(),
-        "model_defaults": {m: get_model_defaults(m) for m in list_models()},
-        "sim_model_defaults": {m: get_model_defaults(m) for m in list_sim_models()},
-    })
+    from ...ai.registry import get_schema
+    schema = get_schema()
+    return jsonify({"config": game.config, "schema": schema})
 
 
 @app.route("/api/suggest")

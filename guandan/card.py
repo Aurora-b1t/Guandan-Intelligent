@@ -108,3 +108,19 @@ def rank_counts(cards: Tuple[Card, ...]) -> dict:
     for c in cards:
         counts[c.rank] = counts.get(c.rank, 0) + 1
     return counts
+
+
+def effective_rank(rank: Rank, level: int) -> int:
+    """Get the comparison-effective rank value for the given level.
+
+    The level card (级牌) ranks above A(14) and below Small Joker.
+    Jokers are shifted up to make room.
+
+    Ordering: 3 < 4 < ... < A(14) < 级牌(15) < SJ(16) < BJ(17)
+    """
+    v = rank.value
+    if v >= 15:          # jokers: shift up to make room for level card
+        return v + 1      # SJ→16, BJ→17
+    if v == level:
+        return 15          # level card: above A(14), below SJ(16)
+    return v

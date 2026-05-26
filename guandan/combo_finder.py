@@ -10,7 +10,7 @@ import random
 from itertools import combinations
 from typing import Dict, List, Optional, Tuple
 
-from .card import Card, Rank, Suit
+from .card import Card, Rank, Suit, effective_rank
 from .combo import Combo, ComboType
 from .combo_parser import ComboParser
 from .combo_compare import can_beat
@@ -224,12 +224,12 @@ class ComboFinder:
     # ------------------------------------------------------------------
 
     def _beat_single(self, target: Combo) -> Optional[Combo]:
-        t_rank = target.main_rank
+        t_eff = effective_rank(target.main_rank, self.level)
         # Find the lowest normal card that beats the target
         best = None
         for c in self.hand:
-            if c.rank > t_rank:
-                if best is None or c.rank < best.main_rank:
+            if effective_rank(c.rank, self.level) > t_eff:
+                if best is None or effective_rank(c.rank, self.level) < effective_rank(best.main_rank, self.level):
                     best = self._make_single(c)
         # Bombs always work
         if best is None:
@@ -237,48 +237,48 @@ class ComboFinder:
         return best
 
     def _beat_pair(self, target: Combo) -> Optional[Combo]:
-        t_rank = target.main_rank
+        t_eff = effective_rank(target.main_rank, self.level)
         best = None
         for rank, cards in self._by_rank.items():
-            if rank > t_rank and len(cards) >= 2:
+            if effective_rank(rank, self.level) > t_eff and len(cards) >= 2:
                 combo = self._parser.parse(list(cards[:2]))
-                if combo and (best is None or rank < best.main_rank):
+                if combo and (best is None or effective_rank(rank, self.level) < effective_rank(best.main_rank, self.level)):
                     best = combo
         # Try wild
         if best is None:
             for c in self.normals:
-                if c.rank > t_rank and self.wild_count >= 1:
+                if effective_rank(c.rank, self.level) > t_eff and self.wild_count >= 1:
                     combo = self._parser.parse([c, self.wilds[0]])
-                    if combo and (best is None or c.rank < best.main_rank):
+                    if combo and (best is None or effective_rank(c.rank, self.level) < effective_rank(best.main_rank, self.level)):
                         best = combo
         if best is None:
             best = self._find_any_bomb()
         return best
 
     def _beat_triple(self, target: Combo) -> Optional[Combo]:
-        t_rank = target.main_rank
+        t_eff = effective_rank(target.main_rank, self.level)
         best = None
         for rank, cards in self._by_rank.items():
-            if rank > t_rank and len(cards) >= 3:
+            if effective_rank(rank, self.level) > t_eff and len(cards) >= 3:
                 combo = self._parser.parse(list(cards[:3]))
-                if combo and (best is None or rank < best.main_rank):
+                if combo and (best is None or effective_rank(rank, self.level) < effective_rank(best.main_rank, self.level)):
                     best = combo
         # Try with wilds
         for rank, cards in self._by_rank.items():
-            if rank > t_rank and len(cards) >= 2 and self.wild_count >= 1:
+            if effective_rank(rank, self.level) > t_eff and len(cards) >= 2 and self.wild_count >= 1:
                 combo = self._parser.parse(cards[:2] + [self.wilds[0]])
-                if combo and (best is None or rank < best.main_rank):
+                if combo and (best is None or effective_rank(rank, self.level) < effective_rank(best.main_rank, self.level)):
                     best = combo
         if best is None:
             best = self._find_any_bomb()
         return best
 
     def _beat_triple_side(self, target: Combo, side_size: int) -> Optional[Combo]:
-        t_rank = target.main_rank
+        t_eff = effective_rank(target.main_rank, self.level)
         total = 3 + side_size
         best = None
         for rank, cards in self._by_rank.items():
-            if rank <= t_rank:
+            if effective_rank(rank, self.level) <= t_eff:
                 continue
             nc = len(cards)
             # Try with 0 wilds for triple
@@ -307,23 +307,29 @@ class ComboFinder:
         return self._find_any_bomb()
 
     def _beat_straight(self, target: Combo) -> Optional[Combo]:
-        # Need a straight of same length with higher end rank
+        # Level card or joker: no straight can beat it (effective rank >= 15)
+        if effective_rank(target.main_rank, self.level) >= 15:
+            return None
         length = target.length
         t_end = target.main_rank.value
         return self._find_straight_beating(length, t_end)
 
     def _beat_consecutive_pairs(self, target: Combo) -> Optional[Combo]:
+        if effective_rank(target.main_rank, self.level) >= 15:
+            return None
         num_pairs = target.length // 2
         t_end = target.main_rank.value
         return self._find_consecutive_pairs_beating(num_pairs, t_end)
 
     def _beat_consecutive_triples(self, target: Combo) -> Optional[Combo]:
+        if effective_rank(target.main_rank, self.level) >= 15:
+            return None
         num_triples = target.length // 3
         t_end = target.main_rank.value
         return self._find_consecutive_triples_beating(num_triples, t_end)
 
     def _beat_normal_bomb(self, target: Combo) -> Optional[Combo]:
-        # Bigger bomb or same-size higher rank
+        # Bigger bomb or same-size higher effective rank
         best = None
         for rank, cards in self._by_rank.items():
             nc = len(cards)
@@ -337,7 +343,7 @@ class ComboFinder:
                     if combo and combo.is_bomb:
                         return combo
                 elif size == target.length:
-                    if rank > target.main_rank:
+                    if effective_rank(rank, self.level) > effective_rank(target.main_rank, self.level):
                         wild_need = max(0, size - nc)
                         combo = self._parser.parse(cards[:size - wild_need] + self.wilds[:wild_need])
                         if combo and combo.is_bomb:
@@ -355,6 +361,7 @@ class ComboFinder:
             main_rank=card.rank,
             length=1,
             wild_indices=(0,) if card.is_wild(self.level) else (),
+            level=self.level,
         )
 
     def _find_any_bomb(self) -> Optional[Combo]:

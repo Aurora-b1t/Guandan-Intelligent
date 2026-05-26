@@ -36,8 +36,10 @@
         <span class="hand-size" id="size-2">27</span>张
         <span class="finished-tag" id="finish-2" style="display:none">已完成</span>
       </div>
-      <div class="play-display" id="play-2"></div>
-      <div class="debug-cards-inline" id="debug-hand-2" style="display:none"></div>
+      <div class="zone-body">
+        <div class="play-display" id="play-2"></div>
+        <div class="debug-cards-inline" id="debug-hand-2" style="display:none"></div>
+      </div>
     </div>
 
     <!-- Left player -->
@@ -47,8 +49,10 @@
         <span class="hand-size" id="size-3">27</span>张
         <span class="finished-tag" id="finish-3" style="display:none">已完成</span>
       </div>
-      <div class="play-display" id="play-3"></div>
-      <div class="debug-cards-inline" id="debug-hand-3" style="display:none"></div>
+      <div class="zone-body">
+        <div class="play-display" id="play-3"></div>
+        <div class="debug-cards-inline" id="debug-hand-3" style="display:none"></div>
+      </div>
     </div>
 
     <!-- Right player -->
@@ -58,8 +62,10 @@
         <span class="hand-size" id="size-1">27</span>张
         <span class="finished-tag" id="finish-1" style="display:none">已完成</span>
       </div>
-      <div class="play-display" id="play-1"></div>
-      <div class="debug-cards-inline" id="debug-hand-1" style="display:none"></div>
+      <div class="zone-body">
+        <div class="play-display" id="play-1"></div>
+        <div class="debug-cards-inline" id="debug-hand-1" style="display:none"></div>
+      </div>
     </div>
 
     <!-- Table center -->
@@ -125,12 +131,12 @@
   </div>
 
   <!-- Start Game Overlay -->
-  <div id="start-overlay" style="display:none;text-align:center;padding:20px">
+  <div id="start-overlay" style="text-align:center;padding:20px">
     <button id="btn-start-game" onclick="startGame()" style="background:#27ae60;color:#fff;border:none;padding:14px 40px;border-radius:10px;font-size:1.2em;cursor:pointer">开始游戏</button>
   </div>
 
-  <!-- Controls -->
-  <div id="controls">
+  <!-- Controls (hidden until game starts) -->
+  <div id="controls" style="display:none">
     <div id="message"></div>
     <div id="buttons">
       <button id="btn-play" onclick="playCards()">出牌</button>
@@ -170,6 +176,7 @@
   </div>
 </div>
 
+<script>window.__INITIAL_STATE__ = {{ initial_state|safe }};</script>
 <script src="/static/game.js"></script>
 </body>
 </html>

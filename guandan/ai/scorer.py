@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from ..card import Card
+from ..card import Card, effective_rank
 from ..combo import Combo
 from .hand_eval import estimate_rounds
 from .params import AIParams, DEFAULT_PARAMS
@@ -48,7 +48,7 @@ def score_play(
     positional = 0.0
     if table_combo is None:
         positional += params.lead_bonus
-        rv = candidate.main_rank.value
+        rv = effective_rank(candidate.main_rank, level)
         if rv >= 15:
             positional += params.joker_lead_penalty
         elif rv >= 13:

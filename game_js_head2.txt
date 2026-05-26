@@ -9,7 +9,7 @@ let debugMode = true;                // default ON
 let flatLayout = false;              // false = vertical columns, true = horizontal
 let comboStrips = [];                // [{cardIds: [id,...]}, ...]
 let aiDebugOpen = false;             // AI debug panel
-let showWinRate = true;              // win rate overlay — default ON
+let showWinRate = false;             // win rate overlay
 let _playerWinRates = {};            // {player_id: win_rate}
 let _playerTimedOut = {};            // {player_id: bool} timeout flag
 let pollTimer = null;                // polling interval ID
@@ -30,8 +30,9 @@ async function fetchState() {
   if (aiDebugOpen || showWinRate) fetchAILog();
 }
 
-function schedulePoll() {
-  pollTimer = setTimeout(async () => {
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
     const r = await fetch('/api/state');
     gameState = await r.json();
     render();
@@ -39,20 +40,13 @@ function schedulePoll() {
     if (aiDebugOpen || showWinRate) fetchAILog();
     if (gameState.my_turn || gameState.game_over || gameState.round_over) {
       stopPolling();
-    } else {
-      schedulePoll();  // re-schedule after current request completes
     }
   }, 400);
 }
 
-function startPolling() {
-  if (pollTimer) return;
-  schedulePoll();
-}
-
 function stopPolling() {
   if (pollTimer) {
-    clearTimeout(pollTimer);
+    clearInterval(pollTimer);
     pollTimer = null;
   }
 }
@@ -107,8 +101,6 @@ async function newGame() {
   selectedCards.clear();
   activeStrip = null;
   comboStrips = [];
-  clearPlayZones();
-  document.getElementById('suggest-panel').style.display = 'none';
   render();
   if (debugMode) fetchDebug();
 }
@@ -119,16 +111,8 @@ async function newRound() {
   selectedCards.clear();
   activeStrip = null;
   comboStrips = [];
-  clearPlayZones();
-  document.getElementById('suggest-panel').style.display = 'none';
   render();
   if (debugMode) fetchDebug();
-}
-
-function clearPlayZones() {
-  for (let p = 0; p < 4; p++) {
-    document.getElementById('play-' + p).innerHTML = '';
-  }
 }
 
 async function showHint() {
@@ -221,16 +205,10 @@ function render() {
 
   // Start overlay
   const started = gameState.game_started;
-  const overlay = document.getElementById('start-overlay');
-  if (overlay) overlay.style.display = started ? 'none' : 'block';
+  document.getElementById('start-overlay').style.display = started ? 'none' : 'block';
   document.getElementById('controls').style.display = started ? 'block' : 'none';
   if (!started) {
-    document.getElementById('message').textContent = gameState.message || '点击「开始游戏」';
-    for (let p = 0; p < 4; p++) {
-      document.getElementById('size-' + p).textContent = gameState.players[p].hand_size;
-    }
-    renderHand(gameState.my_hand);
-    if (debugMode) fetchDebug();
+    document.getElementById('message').textContent = '点击「开始游戏」';
     return;
   }
 
@@ -277,7 +255,7 @@ function render() {
     document.getElementById('btn-play').disabled = true;
     document.getElementById('btn-pass').disabled = true;
     startPolling();
-  } else {
+  } else if (gameState.my_turn) {
     stopPolling();
   }
 
@@ -285,12 +263,10 @@ function render() {
 }
 
 function renderTrickHistory(history) {
-  // Preserve last display when trick completes and history is briefly empty
-  if (!history || history.length === 0) return;
-
   for (let p = 0; p < 4; p++) {
     document.getElementById('play-' + p).innerHTML = '';
   }
+  if (!history || history.length === 0) return;
 
   for (const entry of history) {
     const zone = document.getElementById('play-' + entry.player);
@@ -486,6 +462,7 @@ function renderDebugHands(hands) {
 // ==================================================================
 
 function toggleCard(cardId) {
+  if (!myTurn) return;
   if (selectedCards.has(cardId)) {
     selectedCards.delete(cardId);
   } else {
@@ -560,12 +537,12 @@ function renderAILog(data) {
   // Config summary line
   let configLine = '';
   if (currentConfig) {
-    const labels = {blind:'Blind', informed:'Informed', round:'Round', exact:'Exact', mc:'MC'};
+    const labels = {blind:'Blind盲评', monte_carlo:'MC蒙特卡洛', random:'Random随机'};
     configLine = '<div style="font-size:0.75em;color:#888;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #333">全局: ' +
-      (labels[currentConfig.global_decider] || currentConfig.global_decider || '?');
+      (labels[currentConfig.global_model] || currentConfig.global_model);
     for (const p of [1,2,3]) {
       const pc = (currentConfig.players || {})[p] || {};
-      if (pc.decider) configLine += ' | ' + ['','右','对','左'][p] + '家: ' + (labels[pc.decider]||pc.decider);
+      if (pc.model) configLine += ' | ' + ['','右','对','左'][p] + '家: ' + (labels[pc.model]||pc.model);
     }
     configLine += '</div>';
   }
@@ -874,186 +851,5 @@ async function aiEvaluate() {
 }
 
 // ==================================================================
-// Page init — use embedded state for synchronous first render (no flash)
+// AI Config Panel
 // ==================================================================
-
-if (window.__INITIAL_STATE__) {
-  gameState = window.__INITIAL_STATE__;
-  render();
-  if (debugMode) fetchDebug();
-  // Sync button states with default-on flags
-  const wrBtn = document.getElementById('btn-winrate');
-  if (wrBtn) { wrBtn.style.background = '#27ae60'; wrBtn.style.color = '#fff'; }
-}
-
-// ==================================================================
-// AI Config Panel (schema-driven — add new models in Python only)
-// ==================================================================
-
-let configOpen = false;
-let schema = {};
-let currentConfig = {};
-let configTab = 'global';
-
-function switchConfigTab(tab) {
-  configTab = tab;
-  document.querySelectorAll('.cfg-tab').forEach(b => b.classList.remove('active'));
-  const tabBtn = document.getElementById('cfg-tab-' + tab);
-  if (tabBtn) tabBtn.classList.add('active');
-  ['global','p0','p1','p2','p3'].forEach(t => {
-    const el = document.getElementById('cfg-tabcontent-' + t);
-    if (el) el.style.display = t === tab ? 'block' : 'none';
-  });
-}
-
-async function toggleConfig() {
-  configOpen = !configOpen;
-  document.getElementById('config-panel').style.display = configOpen ? 'block' : 'none';
-  if (configOpen) { await fetchConfig(); switchConfigTab('global'); }
-}
-
-async function fetchConfig() {
-  const r = await fetch('/api/config');
-  const d = await r.json();
-  schema = d.schema || {};
-  currentConfig = d.config || {};
-  buildConfigTab('global', null);
-  for (const p of [0,1,2,3]) { buildConfigTab('p' + p, p); }
-}
-
-function cfgChanged() {
-  const playerId = configTab === 'global' ? null : parseInt(configTab[1]);
-  // Save current form values to currentConfig before rebuild
-  saveToConfig(playerId);
-  buildConfigTab(configTab, playerId);
-}
-
-function saveToConfig(playerId) {
-  const prefix = playerId === null ? 'g' : ('p' + playerId);
-  const deciderSel = document.getElementById('cfg-' + prefix + 'decider');
-  if (!deciderSel) return;
-  const deciderId = deciderSel.value;
-  if (playerId === null) {
-    if (!currentConfig.decider) currentConfig.decider = {default_model:'mc',model_params:{}};
-    currentConfig.decider.default_model = deciderId;
-  } else {
-    if (!currentConfig.players[playerId]) currentConfig.players[playerId] = {decider:null,params:{}};
-    currentConfig.players[playerId].decider = deciderId;
-  }
-  // Save all param values from DOM
-  const deciderCat = (schema.decider || {}).models || {};
-  const deciderDef = deciderCat[deciderId] || {};
-  for (const [k, pdef] of Object.entries(deciderDef.params || {})) {
-    const el = document.getElementById('cfg-' + prefix + 'd-' + k);
-    if (!el) continue;
-    const val = (pdef.type === 'select' || pdef.type === 'ref') ? el.value : parseFloat(el.value);
-    if (playerId === null) {
-      if (!currentConfig.decider.model_params[deciderId]) currentConfig.decider.model_params[deciderId] = {};
-      currentConfig.decider.model_params[deciderId][k] = val;
-    } else {
-      currentConfig.players[playerId].params[k] = val;
-    }
-  }
-}
-
-function renderParam(k, pdef, prefix, curVal) {
-  const label = pdef.label || k;
-  let inputHtml;
-  if (pdef.type === 'select') {
-    const opts = pdef.options || {};
-    inputHtml = `<select id="cfg-${prefix}d-${k}" onchange="cfgChanged()" style="background:#222;color:#ddd;border:1px solid #555;padding:4px 8px;border-radius:4px;font-size:0.95em;width:160px">
-      ${Object.entries(opts).map(([v,l]) => `<option value="${v}" ${curVal==v?'selected':''}>${l}</option>`).join('')}</select>`;
-  } else if (pdef.type === 'ref') {
-    const refCat = (schema[pdef.ref_category] || {}).models || {};
-    inputHtml = `<select id="cfg-${prefix}d-${k}" onchange="cfgChanged()" style="background:#222;color:#ddd;border:1px solid #555;padding:4px 8px;border-radius:4px;font-size:0.95em;width:180px">
-      ${Object.entries(refCat).map(([mid,m]) => `<option value="${mid}" ${curVal==mid?'selected':''}>${m.name}</option>`).join('')}</select>`;
-  } else {
-    const step = pdef.step || 1;
-    inputHtml = `<input type="number" value="${curVal}" step="${step}" id="cfg-${prefix}d-${k}" onchange="cfgChanged()" style="width:72px;background:#222;color:#ddd;border:1px solid #555;border-radius:4px;padding:5px 8px;font-size:0.95em">`;
-  }
-  return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:5px">
-    <span style="width:90px;text-align:right;font-size:0.95em;color:#aaa">${label}</span>
-    ${inputHtml}
-  </div>`;
-}
-
-function buildConfigTab(tabId, playerId) {
-  const container = document.getElementById('cfg-tabcontent-' + tabId);
-  if (!container) return;
-  const isGlobal = playerId === null;
-  const prefix = isGlobal ? 'g' : ('p' + playerId);
-
-  // Determine current decider
-  const deciderCat = (schema.decider || {}).models || {};
-  let deciderId = isGlobal
-    ? ((currentConfig.decider || {}).default_model || 'mc')
-    : ((currentConfig.players[playerId] || {}).decider || (currentConfig.decider || {}).default_model || 'mc');
-
-  const dOpts = Object.entries(deciderCat).map(([mid, m]) =>
-    `<option value="${mid}" ${deciderId===mid?'selected':''}>${m.name}</option>`).join('');
-
-  const deciderDef = deciderCat[deciderId] || {};
-  const curParams = isGlobal
-    ? ((currentConfig.decider || {}).model_params || {})[deciderId] || {}
-    : (currentConfig.players[playerId] || {}).params || {};
-
-  let dHtml = '';
-  for (const [k, pdef] of Object.entries(deciderDef.params || {})) {
-    const curVal = curParams[k] ?? pdef.default;
-    dHtml += renderParam(k, pdef, prefix, curVal);
-  }
-
-  // Also show inner model params if this decider has a "ref" to inner_model
-  const innerRef = Object.entries(deciderDef.params || {}).find(([k,p]) => p.ref_category === 'inner_model');
-  let iHtml = '';
-  if (innerRef) {
-    const innerId = curParams[innerRef[0]] || innerRef[1].default || 'informed';
-    const innerCat = (schema.inner_model || {}).models || {};
-    const innerDef = innerCat[innerId] || {};
-    iHtml = '<div style="color:#888;font-size:0.9em;max-height:260px;overflow-y:auto;margin-top:6px;border-top:1px solid #333;padding-top:6px">内层模型参数 (' + (innerDef.name||innerId) + '):';
-    for (const [k, pdef] of Object.entries(innerDef.params || {})) {
-      const curVal = curParams[k] ?? pdef.default;
-      iHtml += renderParam(k, pdef, prefix, curVal);
-    }
-    iHtml += '</div>';
-  }
-
-  // Player enable checkbox
-  const isEnabled = isGlobal ? true : !!(currentConfig.players[playerId] || {}).decider;
-  const enabledCb = !isGlobal ? `
-    <label style="color:#aaa;font-size:0.95em;margin-bottom:8px;cursor:pointer;display:block">
-      <input type="checkbox" id="cfg-penabled-${playerId}" ${isEnabled?'checked':''} onchange="onPlayerEnable(${playerId})"> 启用独立配置
-    </label>` : '';
-
-  container.innerHTML = `
-    ${enabledCb}
-    <div style="margin-bottom:10px">
-      <span style="color:#daa520;margin-right:8px;font-size:1em">决策器</span>
-      <select id="cfg-${prefix}decider" onchange="cfgChanged()" style="background:#222;color:#ddd;border:1px solid #555;padding:5px 14px;border-radius:4px;font-size:1em">${dOpts}</select>
-      <span style="color:#888;font-size:0.85em;margin-left:8px">${deciderDef.description||''}</span>
-    </div>
-    ${dHtml ? '<div style="color:#aaa;font-size:0.95em">'+dHtml+'</div>' : ''}
-    ${iHtml}`;
-}
-
-function onPlayerEnable(playerId) {
-  const cb = document.getElementById('cfg-penabled-' + playerId);
-  if (!cb.checked) currentConfig.players[playerId] = {decider: null, params: {}};
-  buildConfigTab('p' + playerId, playerId);
-}
-
-async function applyConfig() {
-  saveToConfig(null);  // save global
-  for (const p of [0,1,2,3]) saveToConfig(p);  // save each player
-
-  // Clean null players
-  for (const p of [0,1,2,3]) {
-    const cb = document.getElementById('cfg-penabled-' + p);
-    if (!cb || !cb.checked) currentConfig.players[p] = {decider: null, params: {}};
-  }
-
-  await fetch('/api/config', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentConfig)});
-  const msg = document.getElementById('message'); msg.textContent = 'AI设置已保存'; msg.style.color = '#27ae60';
-  setTimeout(() => { msg.textContent = ''; msg.style.color = ''; }, 1500);
-  await fetchConfig();
-}

@@ -1,0 +1,116 @@
+"""Candidate enumerator — generates plays to evaluate.
+
+Pluggable into MCDecider. Different strategies trade speed vs coverage.
+"""
+
+from __future__ import annotations
+
+from typing import List, Tuple
+
+from ..card import Card
+from ..combo import Combo
+from ..combo_finder import ComboFinder
+from ..combo_compare import can_beat
+from .player_view import PlayerView
+from .memory_enumerator import MemoryAwareEnumerator
+
+
+class CandidateEnumerator:
+    """Base class for candidate generation."""
+
+    name: str = "base"
+    description: str = ""
+
+    def enumerate(self, hand: Tuple[Card, ...], view: PlayerView,
+                  is_lead: bool, table_combo: Combo | None,
+                  level: int) -> List[Combo]:
+        raise NotImplementedError
+
+
+class FullEnumerator(CandidateEnumerator):
+    """Enumerate all valid same-type responses + bomb option. Most complete, slower."""
+
+    name = "全面枚举"
+    description = "穷举所有同类型牌型+炸弹"
+
+    def enumerate(self, hand, view, is_lead, table_combo, level):
+        finder = ComboFinder(hand, level)
+        if is_lead:
+            from .agent import _generate_lead_candidates
+            return _generate_lead_candidates(finder, hand)
+        else:
+            from .agent import _enumerate_responses
+            return _enumerate_responses(hand, table_combo, finder, level)
+
+
+class TopNEnumerator(CandidateEnumerator):
+    """Pre-score with any available scorer, take top N. Faster."""
+
+    name = "预筛TopN"
+    description = "预评分后取前N个候选"
+
+    def __init__(self, top_n: int = 5, pre_scorer: str = "blind"):
+        self.top_n = top_n
+        self.pre_scorer = pre_scorer
+
+    def enumerate(self, hand, view, is_lead, table_combo, level):
+        finder = ComboFinder(hand, level)
+        if is_lead:
+            from .agent import _generate_lead_candidates
+            candidates = _generate_lead_candidates(finder, hand)
+        else:
+            from .agent import _enumerate_responses
+            candidates = _enumerate_responses(hand, table_combo, finder, level)
+
+        if len(candidates) <= self.top_n:
+            return candidates
+
+        # Pre-score with chosen scorer
+        scored = []
+        for c in candidates:
+            used_ids = {x.id for x in c.cards}
+            hand_after = tuple(x for x in hand if x.id not in used_ids)
+            s = self._score(c, hand, hand_after, table_combo, level, view)
+            scored.append((c, s))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [c for c, _ in scored[:self.top_n]]
+
+    def _score(self, c, hand, hand_after, table_combo, level, view):
+        if self.pre_scorer == "blind":
+            from .scorer import score_play
+            from .params import DEFAULT_PARAMS
+            return score_play(c, hand, hand_after, table_combo, level, DEFAULT_PARAMS)
+        elif self.pre_scorer == "informed":
+            from .models.informed_scorer import InformedScorer
+            s = InformedScorer()
+            r = s.analyze(view)
+            for cr in r.candidates:
+                if set(cr.card_ids) == {x.id for x in c.cards}:
+                    return cr.score or 0
+            return 0
+        elif self.pre_scorer == "round":
+            from .models.round_scorer import RoundScorer
+            s = RoundScorer()
+            r = s.analyze(view)
+            for cr in r.candidates:
+                if set(cr.card_ids) == {x.id for x in c.cards}:
+                    return cr.score or 0
+            return 0
+        return 0
+
+
+# Registry
+_ENUMERATORS: dict = {
+    "full": FullEnumerator,
+    "top_n": TopNEnumerator,
+    "memory": MemoryAwareEnumerator,
+}
+
+
+def list_enumerators() -> List[str]:
+    return list(_ENUMERATORS.keys())
+
+
+def create_enumerator(enum_id: str, **kw) -> CandidateEnumerator:
+    cls = _ENUMERATORS.get(enum_id, FullEnumerator)
+    return cls(**kw)
