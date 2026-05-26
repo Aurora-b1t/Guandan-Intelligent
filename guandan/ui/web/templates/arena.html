@@ -78,10 +78,12 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
 .arena-tbl .hand-size { color: #daa520; font-weight: bold; }
 .arena-tbl .zone-body { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .arena-tbl .ahc { display: flex; flex-wrap: wrap; gap: 1px; justify-content: center; padding: 2px; }
-.arena-tbl .ahc .card { width: 36px; height: 50px; cursor: default; }
+.arena-tbl .ahc .card { width: 36px; height: 50px; cursor: default; transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s; }
 .arena-tbl .ahc .card .card-rank { font-size: 0.6em; top: 0; left: 1px; }
 .arena-tbl .ahc .card .card-suit-big { font-size: 0.95em; }
-.arena-tbl .ahc .card:hover { transform: none; box-shadow: none; }
+.arena-tbl .ahc .card.clickable { cursor: pointer; }
+.arena-tbl .ahc .card.clickable:hover { transform: translateY(-3px); box-shadow: 0 3px 10px rgba(0,0,0,0.3); }
+.arena-tbl .ahc .card.selected { transform: translateY(-8px) !important; border-color: #f1c40f; box-shadow: 0 4px 12px rgba(241,196,15,0.4); }
 
 /* Override play-display in arena — show horizontally near each player */
 .arena-tbl .play-display { min-height: 26px; padding: 1px 3px; font-size: 0.75em; }
@@ -209,10 +211,13 @@ const SC = {0:'♣',1:'♦',2:'♥',3:'♠',4:''};
 const SN = {0:'C',1:'D',2:'H',3:'S',4:''};
 const PN = {0:'你',1:'右家',2:'对家',3:'左家'};
 
-function ac(c) {
+function ac(c, cls, attrs) {
   if (!c) return '';
-  let sc = c.is_joker ? (c.rank_name==='SJ'?'joker-black':'joker-red') : 'suit-'+(c.suit_name||SN[c.suit]||'');
-  return `<div class="card ${c.is_wild?' wild':''} ${sc}"><span class="card-rank">${c.rank_name}</span><span class="card-suit-big">${SC[c.suit]||''}</span></div>`;
+  const sc = c.is_joker ? (c.rank_name==='SJ'?'joker-black':'joker-red') : 'suit-'+(c.suit_name||SN[c.suit]||'');
+  let h = `<div class="card${c.is_wild?' wild':''} ${sc}${cls?' '+cls:''}"`;
+  if (attrs) h += ` ${attrs}`;
+  h += `><span class="card-rank">${c.rank_name}</span><span class="card-suit-big">${SC[c.suit]||''}</span></div>`;
+  return h;
 }
 function scs(cs) { return [...cs].sort((a,b)=>a.rank!==b.rank?b.rank-a.rank:(a.suit||0)-(b.suit||0)); }
 
@@ -240,7 +245,7 @@ document.addEventListener('mouseup', () => { if (dragState) { dragState.el.class
 // Shared state
 // ==================================================================
 let scens = [], cats = [], allM = {}, schema = {};
-let P = { cat:'deduction', sid:null, simId:null, simState:null, profs:[], res:[], running:false, abort:null };
+let P = { cat:'deduction', sid:null, simId:null, simState:null, profs:[], res:[], selected:new Set(), running:false, abort:null };
 let T = { cat:'sampling', sid:null, simId:null, simState:null, profs:[], res:[], debug:false, persps:{}, persp:0, running:false, abort:null };
 const CCN = {deduction:'确定推演',sampling:'不确定采样',endgame:'残局求解',opening:'开局评估'};
 
@@ -299,6 +304,7 @@ function buildTable(containerId, st) {
   const names = ['你','右家','对家','左家'];
   const th = st.trick_history||[];
   const cp = st.current_player;
+  const isMyTurn = cp === 0;
 
   // Build per-player latest action from trick_history
   const lastAction = {};
@@ -315,14 +321,25 @@ function buildTable(containerId, st) {
     html += `<div class="zone-header"><span class="name${p===0?' you':''}">${names[p]}</span><span class="hand-size">${pi.hand_size||cards.length}</span>张${pi.finished?' <span class="finished-tag" style="display:inline">已完成</span>':''}</div>`;
     html += `<div class="zone-body">`;
     html += `<div class="play-display" id="apd-${containerId}-${p}"></div>`;
-    if (cards.length) html += `<div class="ahc">${scs(cards).map(ac).join('')}</div>`;
+    if (cards.length) {
+      html += `<div class="ahc" id="ahc-${containerId}-${p}">${scs(cards).map(c => {
+        const sel = P.selected.has(c.id) ? ' selected' : '';
+        const playable = cp===p ? ' clickable' : '';
+        const click = cp===p ? ` data-cid="${c.id}" onclick="toggleArenaCard(${c.id})"` : '';
+        return ac(c, sel+playable, click);
+      }).join('')}</div>`;
+    }
     html += `</div></div>`;
   }
 
-  // Center: status info only
+  // Center: status + manual play/pass buttons
   let centerHTML = `<div class="tbl-ctr"><div class="tinfo">级牌 <strong>Lv${st.level||2}</strong> · 回合${st.trick_number||1}</div>`;
   centerHTML += `<div style="font-size:0.75em;color:#888;margin-top:2px">轮到: <b style="color:#daa520">${names[cp]}</b></div>`;
-  if (st.can_pass) centerHTML += `<div style="font-size:0.65em;color:#888">可过牌</div>`;
+  if (st.can_pass) centerHTML += `<div style="font-size:0.65em;color:#888;margin-bottom:3px">可过牌</div>`;
+  centerHTML += `<div style="display:flex;gap:6px;justify-content:center;margin-top:4px">
+    <button class="btn btn-gn btn-sm" onclick="manualPlay()">出牌</button>
+    ${st.can_pass ? `<button class="btn btn-gy btn-sm" onclick="manualPass()">过牌</button>` : ''}
+  </div>`;
   centerHTML += `</div>`;
   html += centerHTML;
   el.innerHTML = html;
@@ -339,6 +356,23 @@ function buildTable(containerId, st) {
       pd.innerHTML = `<span class="combo-tag">${act.combo.type_cn||act.combo.type}</span> ` + (act.combo.cards||[]).map(ac).join('');
     }
   }
+}
+
+function toggleArenaCard(cid) {
+  if (P.selected.has(cid)) P.selected.delete(cid); else P.selected.add(cid);
+  document.querySelectorAll(`.card[data-cid="${cid}"]`).forEach(el => {
+    el.classList.toggle('selected', P.selected.has(cid));
+  });
+}
+
+function manualPlay() {
+  if (!P.simId || P.selected.size===0) return;
+  stepP(Array.from(P.selected), false);
+}
+
+function manualPass() {
+  if (!P.simId) return;
+  stepP([], true);
 }
 
 // ==================================================================
@@ -372,7 +406,7 @@ function renderProfsP() {
 // ==================================================================
 async function loadScP() { P.cat=document.getElementById('pcat').value; renderScList('sc-list',P.cat,P.sid,'selP'); }
 async function selP(id) {
-  P.sid=id; P.res=[]; loadScP();
+  P.sid=id; P.res=[]; P.selected.clear(); loadScP();
   document.getElementById('pres').innerHTML='<span class="emp">初始化模拟...</span>'; document.getElementById('prcnt').textContent='';
   // Init simulator
   const r = await fetch('/api/arena/sim/init',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario_id:id})});
@@ -403,9 +437,15 @@ async function stepP(cardIds, pass) {
   const body = {sim_id:P.simId, pass:!!pass};
   if (!pass) body.card_ids = cardIds;
   const r = await fetch('/api/arena/sim/step',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  P.simState = await r.json();
+  const newState = await r.json();
+  if (newState.error) {
+    presEl.innerHTML = `<span style="color:#e74c3c;font-size:0.82em">${newState.error}</span>` + presEl.innerHTML;
+    P._suppressRender = false;
+    return;
+  }
+  P.simState = newState;
+  P.selected.clear();
   buildTable('tbl-p', P.simState);
-  // Allow renders again after step completes
   P._suppressRender = false;
 }
 
