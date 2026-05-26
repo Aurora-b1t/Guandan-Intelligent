@@ -296,6 +296,32 @@ class _Node:
                 best = child
         return best
 
+    def to_json(self) -> dict:
+        """Serialize node for frontend tree visualization. Omits state for size."""
+        win_rate = round(self.wins / self.visits, 3) if self.visits > 0 else 0
+        return {
+            "visits": self.visits,
+            "wins": self.wins,
+            "win_rate": win_rate,
+            "children": [
+                {
+                    "action": {
+                        "type": combo.combo_type.name if combo else "PASS",
+                        "type_cn": _COMBO_TYPE_CN.get(combo.combo_type, combo.combo_type.name) if combo else "过牌",
+                        "cards": [c.display for c in combo.cards] if combo else [],
+                    },
+                    "node": child.to_json(),
+                }
+                for combo, child in self.children
+            ],
+        }
+
+
+_COMBO_TYPE_CN = {
+    1: "单张", 2: "对子", 3: "三条", 4: "三带一", 5: "三带二",
+    6: "顺子", 7: "连对", 8: "钢板", 9: "炸弹", 10: "同花顺", 11: "天王炸",
+}
+
 
 # ==================================================================
 # Helpers (duplicated from agent.py for independence)

@@ -24,11 +24,17 @@ class EndgameExactSolver(TestableModel):
 
     name = "endgame_exact"
     description = "终局精确求解器：≤6张手牌时极小化极大搜索全分支"
-    default_config = {"max_depth": 20, "max_cards": 6}
+    default_config = {"max_depth": 20, "max_cards": 6, "time_limit_ms": 20000}
     MAX_CARDS = 6
+
+    def __init__(self, **config):
+        super().__init__(**config)
+        self._start_time = 0
+        self._time_limit = config.get("time_limit_ms", 20000) / 1000.0
 
     def analyze(self, view: PlayerView) -> AnalyzeResult:
         t0 = time.time()
+        self._start_time = t0
         pid = view.player_id
         state = view._state
         hand = view.my_hand
@@ -106,6 +112,8 @@ class EndgameExactSolver(TestableModel):
 
     def _evaluate(self, state: GameState, current_pid: int, my_team: int, depth: int) -> int:
         """Recursive evaluation. Returns a heuristic score (higher = better for my_team)."""
+        if time.time() - self._start_time > self._time_limit:
+            return 0
         if depth > 20:
             return 0
         if len(state.finished_positions) >= 3:

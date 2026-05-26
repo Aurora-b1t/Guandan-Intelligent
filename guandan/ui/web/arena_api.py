@@ -1,4 +1,7 @@
-"""Arena API — model comparison, analysis, and benchmarking."""
+"""Arena API — scenario analysis, model comparison, and benchmarking.
+
+Blueprint registered on the Flask app.
+"""
 
 import time
 from flask import Blueprint, jsonify, request
@@ -6,57 +9,73 @@ from flask import Blueprint, jsonify, request
 from ...card import Card
 from ...combo_parser import ComboParser
 from ...game_state import GameState
+from ...rules import RulesEngine
 from ...table import TableState
-from ..interactive import InteractiveGame
-from tests.arena.scenarios import ALL_SCENARIOS, get_scenario_by_id, list_categories
 from ...ai.player_view import PlayerView
-from ...ai.models import InformedScorer, RoundScorer, EndgameExactSolver, BlindScorer
-from ...ai.registry import get_schema
+from ...ai.registry import get_schema, create_agent_for_player
+from ...ai.logger import AILogger
+from tests.arena.scenarios import ALL_SCENARIOS, get_scenario_by_id, list_categories
 
 arena_bp = Blueprint('arena_api', __name__)
 
 
-def _make_arena_model(model_id: str):
-    if model_id == "informed":
-        return InformedScorer()
-    elif model_id == "round":
-        return RoundScorer()
-    elif model_id == "exact":
-        return EndgameExactSolver()
-    elif model_id == "blind":
-        return BlindScorer()
-    elif model_id == "mc":
-        from ...ai.mc_decider import MCDecider
-        from ...ai.sampler import create_sampler
-        from ...ai.candidate_enum import create_enumerator
-        from ...ai.registry import _make_inner_agent
-        sampler = create_sampler("random")
-        inner = _make_inner_agent("informed", {})
-        enumerator = create_enumerator("full")
-        return MCDecider(sampler=sampler, inner=inner, enumerator=enumerator,
-                        num_samples=50, time_limit_ms=5000)
-    elif model_id == "ismcts":
-        from ...ai.ismcts import ISMCTSDecider
-        from ...ai.sampler import create_sampler
-        from ...ai.candidate_enum import create_enumerator
-        from ...ai.registry import _make_inner_agent
-        sampler = create_sampler("random")
-        inner = _make_inner_agent("informed", {})
-        enumerator = create_enumerator("full")
-        return ISMCTSDecider(sampler=sampler, inner=inner, enumerator=enumerator,
-                            max_iterations=200, time_limit_ms=5000)
-    return None
+# ==================================================================
+# Card serialization (same format as InteractiveGame._card_json)
+# ==================================================================
+
+def _card_json(card: Card, level: int = 2) -> dict:
+    suit_names = {0: "C", 1: "D", 2: "H", 3: "S", 4: ""}
+    rank_names = {2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8",
+                  9: "9", 10: "10", 11: "J", 12: "Q", 13: "K", 14: "A",
+                  15: "SJ", 16: "BJ"}
+    return {
+        "id": card.id,
+        "rank": card.rank.value,
+        "rank_name": rank_names.get(card.rank.value, "?"),
+        "suit": card.suit.value,
+        "suit_name": suit_names.get(card.suit.value, ""),
+        "display": card.display,
+        "is_wild": card.is_wild(level),
+        "is_joker": card.is_joker,
+    }
 
 
-def _build_view(scenario):
-    hand = tuple(Card.from_id(i) for i in scenario.hand)
-    hands = {0: hand}
+def _cards_json(card_ids: list, level: int = 2) -> list:
+    return [_card_json(Card.from_id(i), level) for i in card_ids]
+
+
+# ==================================================================
+# _build_view — construct a PlayerView from a scenario
+# ==================================================================
+
+def _build_view(scenario, perspective: int = 0):
+    """Build a PlayerView for the given scenario and player perspective.
+
+    All cards not assigned to any player's hand are treated as
+    already played, keeping opponent hands small and coherent.
+    """
+    table_ids = set(scenario.table or [])
+
+    # Collect all explicitly assigned card IDs
+    assigned = set(scenario.hand)
+    for ids in scenario.opponents.values():
+        assigned.update(ids)
+    assigned.update(scenario.played_cards)
+    assigned.update(table_ids)
+
+    # Build hands — undefined = 0 cards (finished)
+    raw_hands = {0: tuple(Card.from_id(i) for i in scenario.hand)}
     for p, ids in scenario.opponents.items():
-        hands[int(p)] = tuple(Card.from_id(i) for i in ids)
+        raw_hands[int(p)] = tuple(Card.from_id(i) for i in ids)
     for p in range(4):
-        if p not in hands:
-            hands[p] = tuple()
-    hands_tuple = tuple(hands.get(p, tuple()) for p in range(4))
+        if p not in raw_hands:
+            raw_hands[p] = tuple()
+    hands_tuple = tuple(raw_hands[p] for p in range(4))
+
+    # Every card not in a hand → "already played"
+    all_unused = [i for i in range(108) if i not in assigned]
+    played_ids = list(scenario.played_cards) + all_unused
+    played_cards = [Card.from_id(i) for i in played_ids]
 
     table = TableState(trick_leader=scenario.table_player)
     if scenario.table:
@@ -65,12 +84,317 @@ def _build_view(scenario):
         if combo:
             table.record_play(scenario.table_player, combo)
 
-    played = [Card.from_id(i) for i in scenario.played_cards]
     state = GameState(level=scenario.level, round_number=1,
-                      hands=hands_tuple, current_player=0,
+                      hands=hands_tuple, current_player=perspective,
                       table=table, trick_number=1,
-                      played_cards=played)
-    return PlayerView(state, 0)
+                      played_cards=played_cards)
+    return PlayerView(state, perspective)
+
+
+# ==================================================================
+# Simulator — step-by-step game simulation from a scenario
+# ==================================================================
+
+import copy
+
+class Simulator:
+    """Drives step-by-step game simulation. Stores GameState + RulesEngine."""
+
+    def __init__(self, scenario):
+        self.level = scenario.level
+        self.rules = RulesEngine(scenario.level)
+        self._acc_trick_history = []
+
+        # Build hands from scenario
+        hands_dict = {0: tuple(Card.from_id(i) for i in scenario.hand)}
+        for p, ids in scenario.opponents.items():
+            hands_dict[int(p)] = tuple(Card.from_id(i) for i in ids)
+        for p in range(4):
+            if p not in hands_dict:
+                hands_dict[p] = tuple()
+        hands_tuple = tuple(hands_dict[p] for p in range(4))
+
+        # Current player: if table exists and has a combo, next player after table_player
+        # otherwise current_player from scenario or 0
+        current = getattr(scenario, 'current_player', None)
+        if current is None:
+            if scenario.table:
+                current = (scenario.table_player + 1) % 4
+            else:
+                current = 0
+
+        # Build table
+        trick_leader = scenario.table_player if scenario.table else current
+        table = TableState(trick_leader=trick_leader, pass_count=0)
+        if scenario.table:
+            parser = ComboParser(scenario.level)
+            combo = parser.parse([Card.from_id(i) for i in scenario.table])
+            if combo:
+                table.record_play(scenario.table_player, combo)
+
+        # Build played_cards — add all unused cards
+        assigned = set(scenario.hand)
+        for ids in scenario.opponents.values():
+            assigned.update(ids)
+        assigned.update(scenario.table or [])
+        assigned.update(scenario.played_cards)
+        unused = [i for i in range(108) if i not in assigned]
+        played_ids = list(scenario.played_cards) + unused
+        played_cards = [Card.from_id(i) for i in played_ids]
+
+        # Determine finished positions
+        finished = [p for p in range(4) if len(hands_tuple[p]) == 0]
+
+        self.state = GameState(
+            level=scenario.level, round_number=1,
+            hands=hands_tuple, current_player=current,
+            table=table, trick_number=1,
+            played_cards=played_cards,
+            finished_positions=finished,
+        )
+
+    def apply_play(self, player_id: int, card_ids: list) -> str:
+        """Validate and apply a play. Returns error string or empty on success."""
+        hand = self.state.hands[player_id]
+        cards = [c for c in hand if c.id in card_ids]
+
+        result = self.rules.validate_play(
+            cards=cards, hand=hand, table_state=self.state.table,
+            player_id=player_id, finished_positions=self.state.finished_positions,
+        )
+        if not result.is_legal:
+            return f"不合法出牌: {result.reason.name}"
+
+        # Apply play
+        played_set = {c.id for c in cards}
+        new_hand = tuple(c for c in hand if c.id not in played_set)
+        self.state.hands = tuple(
+            new_hand if i == player_id else h for i, h in enumerate(self.state.hands)
+        )
+        self.state.played_cards.extend(cards)
+        self.state.table.record_play(player_id, result.resolved_combo)
+        self.state.current_player = (player_id + 1) % 4
+        if not new_hand:
+            self.state.finished_positions.append(player_id)
+
+        self._check_trick_end()
+        return ""
+
+    def apply_pass(self, player_id: int) -> str:
+        """Apply a pass. Returns error string or empty on success."""
+        if not self.rules.can_pass(self.state.table, player_id):
+            return "你是首家，不能过"
+        self.state.table.record_pass(player_id)
+        self.state.current_player = (player_id + 1) % 4
+        self._check_trick_end()
+        return ""
+
+    def _check_trick_end(self):
+        """If trick ended, start a new trick."""
+        table = self.state.table
+        if table.last_played_player < 0:
+            return
+        other_active = [p for p in self.state.active_players if p != table.last_played_player]
+        if table.pass_count >= len(other_active):
+            # Trick ended — save history and reset
+            self._acc_trick_history.extend(table.trick_history)
+            leader = self._next_active(table.last_played_player)
+            table.reset_for_new_trick(leader)
+            self.state.trick_number += 1
+            self.state.current_player = leader
+
+    def _next_active(self, start: int) -> int:
+        for _ in range(4):
+            if start not in self.state.finished_positions:
+                return start
+            start = (start + 1) % 4
+        return start
+
+    def get_state(self) -> dict:
+        """Serialize complete game state for frontend."""
+        s = self.state
+        player_names = ["你", "右家", "对家", "左家"]
+
+        # Players info
+        players = []
+        for p in range(4):
+            is_finished = p in s.finished_positions
+            players.append({
+                "id": p, "name": player_names[p],
+                "hand_size": 0 if is_finished else len(s.hands[p]),
+                "hand": [] if is_finished else [self._card_json(c) for c in s.hands[p]],
+                "finished": is_finished,
+                "is_current": p == s.current_player,
+            })
+
+        # Table combo
+        table_combo = None
+        if s.table.current_combo is not None:
+            tc = s.table.current_combo
+            table_combo = {
+                "type": tc.combo_type.name,
+                "type_cn": _COMBO_TYPE_CN.get(tc.combo_type.value, tc.combo_type.name),
+                "cards": [self._card_json(c) for c in tc.cards],
+                "length": tc.length,
+                "last_player": s.table.last_played_player,
+            }
+
+        # Full trick history (accumulated + current)
+        trick_history = []
+        all_entries = self._acc_trick_history + list(s.table.trick_history)
+        for pid, combo in all_entries:
+            if combo is None:
+                trick_history.append({"player": pid, "pass": True})
+            else:
+                trick_history.append({
+                    "player": pid, "pass": False,
+                    "combo": {"type": combo.combo_type.name,
+                              "type_cn": _COMBO_TYPE_CN.get(combo.combo_type.value, combo.combo_type.name),
+                              "cards": [self._card_json(c) for c in combo.cards],
+                              "length": combo.length}
+                })
+
+        can_pass = self.rules.can_pass(s.table, s.current_player)
+        round_over = len(s.finished_positions) >= 3
+
+        return {
+            "players": players,
+            "table_combo": table_combo,
+            "trick_history": trick_history,
+            "current_player": s.current_player,
+            "trick_number": s.trick_number,
+            "can_pass": can_pass,
+            "round_over": round_over,
+            "level": s.level,
+            "finished_positions": [{"id": pid, "name": player_names[pid]} for pid in s.finished_positions],
+            "trick_leader": s.table.trick_leader,
+            "pass_count": s.table.pass_count,
+        }
+
+    def _card_json(self, card: Card) -> dict:
+        suit_names = {0: "C", 1: "D", 2: "H", 3: "S", 4: ""}
+        rank_names = {2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8",9:"9",10:"10",
+                      11:"J",12:"Q",13:"K",14:"A",15:"SJ",16:"BJ"}
+        return {
+            "id": card.id, "rank": card.rank.value,
+            "rank_name": rank_names.get(card.rank.value, "?"),
+            "suit": card.suit.value,
+            "suit_name": suit_names.get(card.suit.value, ""),
+            "display": card.display,
+            "is_wild": card.is_wild(self.level),
+            "is_joker": card.is_joker,
+        }
+
+
+# In-memory simulator storage (keyed by session-like ID)
+_simulators: dict = {}
+
+
+def _get_sim(sim_id: str) -> Simulator | None:
+    return _simulators.get(sim_id)
+
+
+def _card_json_static(card: Card, level: int = 2) -> dict:
+    suit_names = {0: "C", 1: "D", 2: "H", 3: "S", 4: ""}
+    rank_names = {2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8",9:"9",10:"10",
+                  11:"J",12:"Q",13:"K",14:"A",15:"SJ",16:"BJ"}
+    return {"id": card.id, "rank": card.rank.value, "rank_name": rank_names.get(card.rank.value, "?"),
+            "suit": card.suit.value, "suit_name": suit_names.get(card.suit.value, ""),
+            "display": card.display, "is_wild": card.is_wild(level), "is_joker": card.is_joker}
+
+
+# ==================================================================
+# _make_arena_agent — build an agent from a user profile
+# ==================================================================
+
+def _make_arena_agent(profile: dict):
+    """Build an agent that implements .analyze(view) → AnalyzeResult.
+
+    MC deciders (mc, ismcts) go through registry.create_agent_for_player()
+    for real parameter passing. Non-MC deciders use TestableModel wrappers.
+    """
+    model_id = profile.get("id", "blind")
+    label = profile.get("label", model_id)
+
+    # Non-MC deciders — use TestableModel directly
+    if model_id not in ("mc", "ismcts"):
+        if model_id == "informed":
+            from ...ai.models import InformedScorer
+            return InformedScorer(), label
+        elif model_id == "round":
+            from ...ai.models import RoundScorer
+            return RoundScorer(), label
+        elif model_id == "exact":
+            from ...ai.models import EndgameExactSolver
+            tl = profile.get("time_limit_ms", 20000)
+            return EndgameExactSolver(time_limit_ms=tl), label
+        else:  # blind
+            from ...ai.models import BlindScorer
+            return BlindScorer(), label
+
+    # MC deciders — build config from profile and use registry factory
+    decider_params = {}
+    for key in ("num_samples", "time_limit_ms", "max_iterations", "ucb_c",
+                "sampler", "inner", "enumerator", "top_n", "pre_scorer"):
+        if key in profile:
+            decider_params[key] = profile[key]
+
+    config = {
+        "players": {0: {"decider": model_id, "params": decider_params}},
+        "decider": {
+            "default_model": model_id,
+            "model_params": {model_id: decider_params},
+        },
+        "inner_model": {
+            "model_params": {"blind": {}, "informed": {}, "round": {}, "exact": {}},
+        },
+        "enumerator": {"model_params": {"full": {}, "top_n": {}, "memory": {}}},
+    }
+
+    try:
+        agent = create_agent_for_player(config, 0)
+        return agent, label
+    except Exception:
+        return None, label
+
+
+def _serialize_candidate(c: "CandidateResult", level: int) -> dict:
+    """Serialize a CandidateResult to JSON-safe dict."""
+    return {
+        "combo_type": c.combo_type,
+        "cards": c.cards,
+        "card_ids": c.card_ids,
+        "score": c.score,
+        "win_rate": c.win_rate,
+        "reasoning": c.reasoning,
+    }
+
+
+def _serialize_analyze_result(result: "AnalyzeResult", level: int, model_id: str, model_name: str, elapsed_ms: float) -> dict:
+    """Serialize an AnalyzeResult to JSON-safe dict."""
+    choice_dict = None
+    if result.choice:
+        choice_dict = {
+            "combo_type": result.choice.combo_type,
+            "cards": result.choice.cards,
+            "card_ids": result.choice.card_ids,
+            "win_rate": result.choice.win_rate,
+            "score": result.choice.score,
+            "reasoning": result.choice.reasoning,
+        }
+
+    return {
+        "model_id": model_id,
+        "model_name": model_name,
+        "choice": choice_dict,
+        "pass_chosen": result.pass_chosen,
+        "candidates": [_serialize_candidate(c, level) for c in (result.candidates or [])],
+        "metrics": {
+            "elapsed_ms": result.metrics.get("elapsed_ms", elapsed_ms),
+            "timed_out": result.metrics.get("timed_out", False),
+            "iterations": result.metrics.get("iterations", 0),
+        },
+    }
 
 
 # ==================================================================
@@ -82,11 +406,14 @@ def list_models():
     schema = get_schema()
     decider = schema.get("decider", {}).get("models", {})
     inner = schema.get("inner_model", {}).get("models", {})
+    enumerator = schema.get("enumerator", {}).get("models", {})
     return jsonify({
-        "outer": [{"id": mid, "name": m["name"], "description": m.get("description",""),
+        "outer": [{"id": mid, "name": m["name"], "description": m.get("description", ""),
                    "is_mc": m.get("is_mc", False)} for mid, m in decider.items()],
-        "inner": [{"id": mid, "name": m["name"], "description": m.get("description","")}
+        "inner": [{"id": mid, "name": m["name"], "description": m.get("description", "")}
                   for mid, m in inner.items()],
+        "enumerator": [{"id": mid, "name": m["name"], "description": m.get("description", "")}
+                       for mid, m in enumerator.items()],
     })
 
 
@@ -108,98 +435,163 @@ def list_scenarios():
 @arena_bp.route("/api/arena/scenarios/<scenario_id>")
 def get_scenario(scenario_id):
     s = get_scenario_by_id(scenario_id)
-    if not s: return jsonify({"error": "Not found"}), 404
-    return jsonify({"id": s.id, "name": s.name, "category": s.category,
-                    "description": s.description,
-                    "hand": [{"id": i, "display": Card.from_id(i).display} for i in s.hand],
-                    "table": [{"id": i, "display": Card.from_id(i).display} for i in (s.table or [])],
-                    "level": s.level, "expected_play": s.expected_play,
-                    "expected_pass": s.expected_pass, "reasoning": s.reasoning})
+    if not s:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({
+        "id": s.id, "name": s.name, "category": s.category,
+        "description": s.description, "level": s.level,
+        "hand": _cards_json(s.hand, s.level),
+        "table": _cards_json(s.table or [], s.level),
+        "table_player": s.table_player,
+        "played_cards": _cards_json(s.played_cards, s.level),
+        "opponents": {str(p): _cards_json(ids, s.level) for p, ids in s.opponents.items()},
+        "expected_play": s.expected_play,
+        "expected_pass": s.expected_pass,
+        "reasoning": s.reasoning,
+    })
 
 
-@arena_bp.route("/api/arena/compare", methods=["POST"])
-def compare():
+@arena_bp.route("/api/arena/scenarios/<scenario_id>/perspectives")
+def get_perspectives(scenario_id):
+    """Return the PlayerView for each of the 4 player perspectives."""
+    s = get_scenario_by_id(scenario_id)
+    if not s:
+        return jsonify({"error": "Not found"}), 404
+
+    perspectives = {}
+    player_names = ["你", "AI-右家", "AI-对家", "AI-左家"]
+    for p in range(4):
+        view = _build_view(s, perspective=p)
+        pj = view.to_json()
+        pj["player_name"] = player_names[p]
+        pj["my_hand"] = [_card_json(c, s.level) for c in view.my_hand] if p == 0 else []
+        pj["my_hand_size"] = len(view.my_hand) if p == 0 else view.opponent_hand_size(p)
+        perspectives[str(p)] = pj
+
+    return jsonify({
+        "scenario_id": s.id,
+        "level": s.level,
+        "perspectives": perspectives,
+    })
+
+
+@arena_bp.route("/api/arena/analyze/scenario", methods=["POST"])
+def analyze_scenario():
+    """Run models on a scenario and return full results with candidates.
+
+    Request: {scenario_id, models: [{id, label, num_samples, ...}], perspective: 0}
+    Response: {scenario, perspective, results: [{candidates, choice, metrics}]}
+    """
     data = request.get_json() or {}
     scenario_id = data.get("scenario_id")
-    model_ids = data.get("models", ["blind", "informed"])
+    model_profiles = data.get("models", [{"id": "blind"}])
+    perspective = int(data.get("perspective", 0))
+    debug = data.get("debug", False)
+
     scenario = get_scenario_by_id(scenario_id) if scenario_id else None
     if not scenario:
         return jsonify({"error": "Scenario not found"}), 404
 
-    view = _build_view(scenario)
-    results = []
+    view = _build_view(scenario, perspective=perspective)
+    schema = get_schema()
     schema_names = {}
-    s = get_schema()
     for cat in ["decider", "inner_model"]:
-        for mid, m in s.get(cat, {}).get("models", {}).items():
+        for mid, m in schema.get(cat, {}).get("models", {}).items():
             schema_names[mid] = m["name"]
 
-    for entry in model_ids:
-        mid = entry if isinstance(entry, str) else entry.get("id", entry)
+    # Clear AI log before running
+    AILogger.get().clear()
+
+    results = []
+    for entry in model_profiles:
+        mid = entry.get("id", entry) if isinstance(entry, dict) else entry
         label = entry.get("label") if isinstance(entry, dict) else None
-        model = _make_arena_model(mid)
-        if model is None: continue
-        name = label or schema_names.get(mid) or getattr(model, 'name', mid)
+        agent, name = _make_arena_agent(entry if isinstance(entry, dict) else {"id": mid})
+        if agent is None:
+            results.append({"model_id": mid, "error": "Unknown model"})
+            continue
+        name = label or schema_names.get(mid, name or mid)
+
         t0 = time.time()
         try:
-            result = model.analyze(view)
+            result = agent.analyze(view)
         except Exception as e:
-            results.append({"model": mid, "model_name": name, "error": str(e)})
+            results.append({"model_id": mid, "model_name": name, "error": str(e)})
             continue
         elapsed = (time.time() - t0) * 1000
-        results.append({
-            "model": mid, "model_name": name,
-            "choice": {"type": result.choice.combo_type if result.choice else "NONE",
-                       "cards": result.choice.cards if result.choice else []} if result.choice else None,
-            "pass_chosen": result.pass_chosen,
-            "top_candidates": [{"type": c.combo_type, "cards": c.cards, "score": c.score, "win_rate": c.win_rate}
-                               for c in (result.candidates or [])[:5]],
-            "elapsed_ms": result.metrics.get("elapsed_ms", elapsed),
-            "timed_out": result.metrics.get("timed_out", False),
-        })
 
-    return jsonify({"scenario_id": scenario.id, "scenario_name": scenario.name,
-                    "expected": {"play": scenario.expected_play, "pass": scenario.expected_pass},
-                    "results": results})
+        r = _serialize_analyze_result(result, scenario.level, mid, name, elapsed)
+
+        # Attach debug info if requested
+        if debug:
+            log_entries = AILogger.get().get_recent(50)
+            r["debug"] = {"ai_log": log_entries}
+            # If ISMCTS, serialize root node tree
+            if hasattr(agent, 'root') and agent.root is not None:
+                r["debug"]["mcts_tree"] = agent.root.to_json()
+
+        results.append(r)
+
+    return jsonify({
+        "scenario": {
+            "id": scenario.id, "name": scenario.name, "category": scenario.category,
+            "description": scenario.description, "level": scenario.level,
+            "hand": _cards_json(scenario.hand, scenario.level),
+            "table": _cards_json(scenario.table or [], scenario.level),
+            "table_player": scenario.table_player,
+            "played_cards": _cards_json(scenario.played_cards, scenario.level),
+            "expected_play": scenario.expected_play,
+            "expected_pass": scenario.expected_pass,
+            "reasoning": scenario.reasoning,
+        },
+        "perspective": perspective,
+        "results": results,
+    })
 
 
 @arena_bp.route("/api/arena/benchmark", methods=["POST"])
 def benchmark():
+    """Run models across a category of scenarios."""
     data = request.get_json() or {}
-    model_ids = data.get("models", ["blind", "informed"])
+    model_profiles = data.get("models", [{"id": "blind"}])
     category = data.get("category")
     scenarios = ALL_SCENARIOS
-    if category: scenarios = [s for s in scenarios if s.category == category]
+    if category:
+        scenarios = [s for s in scenarios if s.category == category]
 
-    results = []
+    schema = get_schema()
     schema_names = {}
-    s = get_schema()
     for cat in ["decider", "inner_model"]:
-        for mid, m in s.get(cat, {}).get("models", {}).items():
+        for mid, m in schema.get(cat, {}).get("models", {}).items():
             schema_names[mid] = m["name"]
 
+    results = []
     for scenario in scenarios:
-        view = _build_view(scenario)
-        for entry in model_ids:
-            mid = entry if isinstance(entry, str) else entry.get("id", entry)
+        view = _build_view(scenario, perspective=0)
+        for entry in model_profiles:
+            mid = entry.get("id", entry) if isinstance(entry, dict) else entry
             label = entry.get("label") if isinstance(entry, dict) else None
-            model = _make_arena_model(mid)
-            if model is None: continue
-            name = label or schema_names.get(mid) or getattr(model, 'name', mid)
+            agent, name = _make_arena_agent(entry if isinstance(entry, dict) else {"id": mid})
+            if agent is None:
+                continue
+            name = label or schema_names.get(mid, name or mid)
+
             t0 = time.time()
             try:
-                result = model.analyze(view)
+                result = agent.analyze(view)
             except Exception as e:
                 results.append({"scenario_id": scenario.id, "scenario_name": scenario.name,
                                 "category": scenario.category, "model": mid, "model_name": name,
                                 "error": str(e), "correct": False, "elapsed_ms": 0})
                 continue
             elapsed = (time.time() - t0) * 1000
+
             correct = False
             if scenario.expected_pass:
                 correct = result.pass_chosen
             elif scenario.expected_play and result.choice:
                 correct = set(result.choice.card_ids) == set(scenario.expected_play)
+
             results.append({
                 "scenario_id": scenario.id, "scenario_name": scenario.name,
                 "category": scenario.category, "model": mid, "model_name": name,
@@ -210,18 +602,148 @@ def benchmark():
                 "timed_out": result.metrics.get("timed_out", False),
             })
 
+    # Build summary
     by_model = {}
     for r in results:
         mid = r["model"]
-        if mid not in by_model: by_model[mid] = {"total":0,"correct":0,"total_ms":0,"name":r.get("model_name",mid)}
+        if mid not in by_model:
+            by_model[mid] = {"total": 0, "correct": 0, "total_ms": 0, "name": r.get("model_name", mid)}
         by_model[mid]["total"] += 1
-        if r["correct"]: by_model[mid]["correct"] += 1
+        if r["correct"]:
+            by_model[mid]["correct"] += 1
         by_model[mid]["total_ms"] += r["elapsed_ms"]
+
     summary = []
     for mid, s in by_model.items():
-        summary.append({"model":mid,"model_name":s["name"],
-                        "accuracy":round(s["correct"]/s["total"]*100,1) if s["total"]>0 else 0,
-                        "avg_ms":round(s["total_ms"]/s["total"],1) if s["total"]>0 else 0,
-                        "correct":s["correct"],"total":s["total"]})
+        summary.append({
+            "model": mid, "model_name": s["name"],
+            "accuracy": round(s["correct"] / s["total"] * 100, 1) if s["total"] > 0 else 0,
+            "avg_ms": round(s["total_ms"] / s["total"], 1) if s["total"] > 0 else 0,
+            "correct": s["correct"], "total": s["total"],
+        })
     summary.sort(key=lambda x: x["accuracy"], reverse=True)
     return jsonify({"results": results, "summary": summary})
+
+
+# ==================================================================
+# Simulation API (step-by-step game replay)
+# ==================================================================
+
+import uuid
+
+@arena_bp.route("/api/arena/sim/init", methods=["POST"])
+def sim_init():
+    """Create a new simulator from a scenario. Returns initial game state."""
+    data = request.get_json() or {}
+    scenario_id = data.get("scenario_id")
+    scenario = get_scenario_by_id(scenario_id) if scenario_id else None
+    if not scenario:
+        return jsonify({"error": "Scenario not found"}), 404
+
+    sid = uuid.uuid4().hex
+    sim = Simulator(scenario)
+    _simulators[sid] = sim
+    state = sim.get_state()
+    state["sim_id"] = sid
+    return jsonify(state)
+
+
+@arena_bp.route("/api/arena/sim/state", methods=["POST"])
+def sim_state():
+    """Get current simulator state."""
+    data = request.get_json() or {}
+    sim = _get_sim(data.get("sim_id"))
+    if not sim:
+        return jsonify({"error": "Simulator not found"}), 404
+    state = sim.get_state()
+    state["sim_id"] = data["sim_id"]
+    return jsonify(state)
+
+
+@arena_bp.route("/api/arena/sim/step", methods=["POST"])
+def sim_step():
+    """Execute a play or pass, advance to next player."""
+    data = request.get_json() or {}
+    sim = _get_sim(data.get("sim_id"))
+    if not sim:
+        return jsonify({"error": "Simulator not found"}), 404
+
+    player_id = data.get("player_id", sim.state.current_player)
+    if data.get("pass"):
+        err = sim.apply_pass(player_id)
+        if err:
+            return jsonify({"error": err})
+    else:
+        card_ids = data.get("card_ids", [])
+        if not card_ids:
+            return jsonify({"error": "No card_ids provided"})
+        err = sim.apply_play(player_id, card_ids)
+        if err:
+            return jsonify({"error": err})
+
+    state = sim.get_state()
+    state["sim_id"] = data["sim_id"]
+    return jsonify(state)
+
+
+@arena_bp.route("/api/arena/sim/analyze", methods=["POST"])
+def sim_analyze():
+    """Run model analysis on the current simulation state."""
+    data = request.get_json() or {}
+    sim = _get_sim(data.get("sim_id"))
+    if not sim:
+        return jsonify({"error": "Simulator not found"}), 404
+
+    model_profiles = data.get("models", [{"id": "blind"}])
+    state = sim.state
+    level = state.level
+    current_pid = state.current_player
+
+    # Build PlayerView for the current player
+    from ...ai.action_log import ActionLog
+    action_log = ActionLog()
+    view = PlayerView(state, current_pid, action_log)
+
+    # Run models
+    schema = get_schema()
+    schema_names = {}
+    for cat in ["decider", "inner_model"]:
+        for mid, m in schema.get(cat, {}).get("models", {}).items():
+            schema_names[mid] = m["name"]
+
+    AILogger.get().clear()
+    results = []
+
+    for entry in model_profiles:
+        mid = entry.get("id", entry) if isinstance(entry, dict) else entry
+        label = entry.get("label") if isinstance(entry, dict) else None
+        agent, name = _make_arena_agent(entry if isinstance(entry, dict) else {"id": mid})
+        if agent is None:
+            results.append({"model_id": mid, "error": "Unknown model"})
+            continue
+        name = label or schema_names.get(mid, name or mid)
+
+        t0 = time.time()
+        try:
+            result = agent.analyze(view)
+        except Exception as e:
+            results.append({"model_id": mid, "model_name": name, "error": str(e)})
+            continue
+        elapsed = (time.time() - t0) * 1000
+
+        r = _serialize_analyze_result(result, level, mid, name, elapsed)
+        if data.get("debug"):
+            log_entries = AILogger.get().get_recent(50)
+            r["debug"] = {"ai_log": log_entries}
+        results.append(r)
+
+    return jsonify({
+        "current_player": current_pid,
+        "results": results,
+    })
+
+
+_COMBO_TYPE_CN = {
+    1: "单张", 2: "对子", 3: "三条", 4: "三带一", 5: "三带二",
+    6: "顺子", 7: "连对", 8: "钢板", 9: "炸弹", 10: "同花顺", 11: "天王炸",
+}
