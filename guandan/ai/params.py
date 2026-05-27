@@ -27,8 +27,9 @@ class AIParams:
     # Positional
     lead_bonus: float = 1.0
     follow_bonus: float = 1.0
-    joker_lead_penalty: float = -1.0    # leading with a joker
-    high_rank_lead_penalty: float = -0.3  # leading with K+
+    joker_lead_penalty: float = -18.0      # per joker card led (eff>=16)
+    rank_card_lead_penalty: float = -10.0   # per rank/level card led (eff==15)
+    high_rank_lead_penalty: float = -0.5    # leading with K/A (eff>=13)
 
     # Card usage
     card_usage_weight: float = 0.3
@@ -49,6 +50,7 @@ class AIParams:
             "lead_bonus": self.lead_bonus,
             "follow_bonus": self.follow_bonus,
             "joker_lead_penalty": self.joker_lead_penalty,
+            "rank_card_lead_penalty": self.rank_card_lead_penalty,
             "high_rank_lead_penalty": self.high_rank_lead_penalty,
             "card_usage_weight": self.card_usage_weight,
             "pass_threshold": self.pass_threshold,

@@ -18,7 +18,6 @@ _COMBO_WEIGHTS: Dict[ComboType, float] = {
     ComboType.SINGLE:          0.1,
     ComboType.PAIR:            0.4,
     ComboType.TRIPLE:          0.8,
-    ComboType.TRIPLE_SINGLE:   1.2,
     ComboType.TRIPLE_PAIR:     1.5,
     ComboType.STRAIGHT:        0.6,
     ComboType.CONSECUTIVE_PAIRS: 0.5,
@@ -224,24 +223,17 @@ def _find_largest_non_bomb(cards: List[Card], parser, level: int) -> Optional[Li
                     if parsed and not parsed.is_bomb:
                         return subset + wilds
 
-    # Try triple+pair, triple+single
+    # Try triple+pair (三带二)
     by_rank: dict = {}
     for c in normals:
         by_rank.setdefault(c.rank, []).append(c)
     for rank, cs in by_rank.items():
         if len(cs) >= 3:
-            others = [c for c in normals if c.rank != rank]
-            # triple+pair
             for r2, cs2 in by_rank.items():
                 if r2 != rank and len(cs2) >= 2:
                     parsed = parser.parse(cs[:3] + cs2[:2])
                     if parsed and not parsed.is_bomb:
                         return cs[:3] + cs2[:2]
-            # triple+single
-            if others:
-                parsed = parser.parse(cs[:3] + [others[0]])
-                if parsed and not parsed.is_bomb:
-                    return cs[:3] + [others[0]]
 
     # Pair (biggest rank)
     for rank, cs in sorted(by_rank.items(), key=lambda x: -x[0].value):

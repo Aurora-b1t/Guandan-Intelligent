@@ -81,17 +81,17 @@ def _enumerate_responses(hand: Tuple[Card, ...], table_combo: Combo,
                 parsed = parser.parse(list(cards[:3]))
                 if parsed: candidates.append(parsed); count += 1
                 if count >= 3: break
-    elif ct.name in ('TRIPLE_SINGLE', 'TRIPLE_PAIR'):
-        side = 1 if ct.name == 'TRIPLE_SINGLE' else 2
+    elif ct.name == 'TRIPLE_PAIR':
         t_eff = effective_rank(table_combo.main_rank, level)
         by_rank: dict = {}
         for c in hand: by_rank.setdefault(c.rank, []).append(c)
         for rank, cards in by_rank.items():
             if effective_rank(rank, level) > t_eff and len(cards) >= 3:
-                others = [c for r2, cs in by_rank.items() if r2 != rank for c in cs]
-                if len(others) >= side:
-                    parsed = parser.parse(list(cards[:3]) + others[:side])
-                    if parsed: candidates.append(parsed)
+                # Need a pair of different rank for the side
+                for r2, cs2 in by_rank.items():
+                    if r2 != rank and len(cs2) >= 2:
+                        parsed = parser.parse(list(cards[:3]) + list(cs2[:2]))
+                        if parsed: candidates.append(parsed)
     elif ct.name in ('STRAIGHT', 'STRAIGHT_FLUSH'):
         if effective_rank(table_combo.main_rank, level) >= 15:
             pass  # level card or joker: no same-type response possible
@@ -173,56 +173,101 @@ def _generate_lead_candidates(finder: ComboFinder, hand: Tuple[Card, ...]) -> Li
             seen.add(key)
             candidates.append(c)
 
-    # Singles: try lowest ranks
+    normals = [c for c in hand if not c.is_wild(finder.level)]
+    wilds_list = [c for c in hand if c.is_wild(finder.level)]
+    by_rank: dict = {}
+    for c in hand:
+        by_rank.setdefault(c.rank, []).append(c)
+
+    # Singles: lowest ranks (up to 5)
     singles = sorted(hand, key=lambda c: (c.rank.value, c.suit.value))
     for c in singles[:5]:
         parsed = parser.parse([c])
         if parsed:
             add(parsed)
 
-    # Pairs: lowest rank pair
-    by_rank: dict = {}
-    for c in hand:
-        by_rank.setdefault(c.rank, []).append(c)
+    # Pairs: all possible pairs (sorted by rank, up to 5)
+    pair_count = 0
     for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
         if len(cards) >= 2:
             parsed = parser.parse(list(cards[:2]))
-            if parsed:
-                add(parsed)
-                break
+            if parsed: add(parsed); pair_count += 1
+            if pair_count >= 5: break
 
-    # Triples
+    # Triples: all (up to 3)
+    triple_count = 0
     for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
         if len(cards) >= 3:
             parsed = parser.parse(list(cards[:3]))
-            if parsed:
-                add(parsed)
-                break
+            if parsed: add(parsed); triple_count += 1
+            if triple_count >= 3: break
 
-    # Straights
-    normals = [c for c in hand if not c.is_wild(finder.level)]
-    wilds_list = [c for c in hand if c.is_wild(finder.level)]
+    # Triple+pair: 三带二
+    for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
+        if len(cards) >= 3:
+            for r2, cs2 in by_rank.items():
+                if r2 != rank and len(cs2) >= 2:
+                    parsed = parser.parse(list(cards[:3]) + list(cs2[:2]))
+                    if parsed: add(parsed)
+
+    # Straights: try lengths 5,6,7
     for length in [5, 6, 7]:
+        found_straight = False
         for end in range(length + 2, 15):
             start = end - length + 1
-            if start < 3:
-                continue
-            needed = 0
-            subset = []
+            if start < 3: continue
+            needed = 0; subset = []
             for r_val in range(start, end + 1):
                 matches = [c for c in normals if c.rank.value == r_val]
-                if matches:
-                    subset.append(matches[0])
-                else:
-                    needed += 1
+                if matches: subset.append(matches[0])
+                else: needed += 1
             if needed == len(wilds_list) and len(subset) + needed == length:
                 parsed = parser.parse(subset + wilds_list)
                 if parsed and parsed.combo_type.name in ('STRAIGHT', 'STRAIGHT_FLUSH'):
+                    add(parsed); found_straight = True; break
+        if found_straight: break
+
+    # Consecutive pairs (连对): 3+ consecutive ranks with ≥2 cards each
+    for num_pairs in [3, 4, 5]:
+        for end in range(num_pairs + 2, 15):
+            start = end - num_pairs + 1
+            if start < 3: continue
+            needed = 0; subset = []
+            for r_val in range(start, end + 1):
+                cs = by_rank.get(Rank(r_val), [])
+                available = min(len(cs), 2)
+                subset.extend(cs[:available])
+                needed += max(0, 2 - available)
+            if needed <= len(wilds_list):
+                total_cards = subset + wilds_list[:needed]
+                parsed = parser.parse(total_cards)
+                if parsed and parsed.combo_type.name == 'CONSECUTIVE_PAIRS':
                     add(parsed)
                     break
-        break  # only try one length
+        else: continue
+        break
 
-    # Bombs — included as lead candidates, scoring will decide
+    # Consecutive triples (钢板): 2+ consecutive ranks with ≥3 cards each
+    for num_triples in [2, 3]:
+        for end in range(num_triples + 2, 15):
+            start = end - num_triples + 1
+            if start < 3: continue
+            needed = 0; subset = []
+            for r_val in range(start, end + 1):
+                cs = by_rank.get(Rank(r_val), [])
+                available = min(len(cs), 3)
+                subset.extend(cs[:available])
+                needed += max(0, 3 - available)
+            if needed <= len(wilds_list):
+                total_cards = subset + wilds_list[:needed]
+                parsed = parser.parse(total_cards)
+                if parsed and parsed.combo_type.name == 'CONSECUTIVE_TRIPLES':
+                    add(parsed)
+                    break
+        else: continue
+        break
+
+    # Bombs
     for rank, cards in sorted(by_rank.items(), key=lambda x: x[0].value):
         nc = len(cards)
         total = nc + len(wilds_list)
@@ -233,7 +278,6 @@ def _generate_lead_candidates(finder: ComboFinder, hand: Tuple[Card, ...]) -> Li
             parsed = parser.parse(all_cards)
             if parsed and parsed.is_bomb:
                 add(parsed)
-                break
 
     # Rocket
     big = [c for c in hand if c.rank == Rank.BIG_JOKER]
@@ -362,6 +406,16 @@ class BlindAgent(BaseAgent):
                     bomb_pen = p.bomb_vs_bomb_bonus
             usage = c.length * p.card_usage_weight
             pos = p.lead_bonus if table_combo is None else (p.follow_bonus if not c.is_bomb else 0)
+            # Per-card penalty for leading high-value cards
+            if table_combo is None:
+                rv = effective_rank(c.main_rank, level)
+                rank_card_count = sum(1 for x in c.cards if x.rank == c.main_rank)
+                if rv >= 16:  # jokers
+                    pos += p.joker_lead_penalty * max(1, rank_card_count)
+                elif rv == 15:  # level card (级牌)
+                    pos += p.rank_card_lead_penalty * max(1, rank_card_count)
+                elif rv >= 13:  # K, A
+                    pos += p.high_rank_lead_penalty
             s = eff + bomb_pen + usage + pos
             if s > best_score:
                 best_score = s

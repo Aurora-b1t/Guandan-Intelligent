@@ -101,12 +101,11 @@ def test_parser_triples():
 
 def test_parser_triple_side():
     parser = ComboParser(level=2)
-    # Triple+Single: 3 of rank 5 + 1 of rank 8
+    # Triple+Single: now illegal in Guandan (掼蛋不允许三带一)
     triple_ids = _find_cards(Rank.FIVE, count=3)
     single_ids = _find_cards(Rank.EIGHT, count=1)
     combo = parser.parse(_cards(triple_ids + single_ids))
-    assert combo.combo_type == ComboType.TRIPLE_SINGLE
-    assert combo.main_rank == Rank.FIVE
+    assert combo is None, "三带一 should be illegal"
 
     # Triple+Pair: 3 of rank K + 2 of rank 3
     triple_ids = _find_cards(Rank.K, count=3)

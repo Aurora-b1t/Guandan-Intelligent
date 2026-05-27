@@ -23,7 +23,6 @@ def combo_to_str(combo: Combo) -> str:
         ComboType.SINGLE: "单张",
         ComboType.PAIR: "对子",
         ComboType.TRIPLE: "三条",
-        ComboType.TRIPLE_SINGLE: "三带一",
         ComboType.TRIPLE_PAIR: "三带二",
         ComboType.STRAIGHT: "顺子",
         ComboType.CONSECUTIVE_PAIRS: "连对",

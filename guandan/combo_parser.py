@@ -57,8 +57,6 @@ class ComboParser:
             yield self._try_straight
         if n == 5:
             yield self._try_triple_pair
-        if n == 4:
-            yield self._try_triple_single
         if n == 3:
             yield self._try_triple
         if n == 2:
@@ -188,10 +186,6 @@ class ComboParser:
         """Triple + Pair (三带二): 5 cards, one triple + one pair of different ranks."""
         return self._try_triple_side(normals, wilds, wild_count, side_size=2, combo_type=ComboType.TRIPLE_PAIR)
 
-    def _try_triple_single(self, normals: List[Card], wilds: List[Card], wild_count: int) -> Optional[Combo]:
-        """Triple + Single (三带一): 4 cards, one triple + one single of different ranks."""
-        return self._try_triple_side(normals, wilds, wild_count, side_size=1, combo_type=ComboType.TRIPLE_SINGLE)
-
     def _try_triple(self, normals: List[Card], wilds: List[Card], wild_count: int) -> Optional[Combo]:
         """Triple (三张): exactly 3 cards of same rank."""
         if len(normals) + len(wilds) != 3:
@@ -262,9 +256,9 @@ class ComboParser:
         self, normals: List[Card], wilds: List[Card], wild_count: int,
         side_size: int, combo_type: ComboType,
     ) -> Optional[Combo]:
-        """Resolve triple+single (side=1) or triple+pair (side=2).
+        """Resolve triple+pair (side=2).
 
-        The triple and the side component must have different ranks.
+        The triple and the side pair must have different ranks.
         Wilds can contribute to either component.
         """
         expected_total = 3 + side_size
@@ -288,29 +282,22 @@ class ComboParser:
             if remaining_count != side_size:
                 continue
 
-            if side_size == 1:
-                # Any remaining card(s) work as the single
-                # Must have at least 1 normal or 1 wild for the single
-                side_rank = remaining_normals[0].rank if remaining_normals else Rank(self.level)
-                if side_rank == triple_rank:
+            # Need a pair of rank different from triple
+            side_normal_ranks = Counter(c.rank for c in remaining_normals)
+            if len(side_normal_ranks) > 1:
+                continue
+            if side_normal_ranks:
+                side_rank = next(iter(side_normal_ranks))
+                side_normal_count = side_normal_ranks[side_rank]
+                needed_for_side = max(0, 2 - side_normal_count)
+                if needed_for_side != remaining_wilds:
                     continue
-            else:  # side_size == 2
-                # Need a pair of rank different from triple
-                side_normal_ranks = Counter(c.rank for c in remaining_normals)
-                if len(side_normal_ranks) > 1:
-                    continue
-                if side_normal_ranks:
-                    side_rank = next(iter(side_normal_ranks))
-                    side_normal_count = side_normal_ranks[side_rank]
-                    needed_for_side = max(0, 2 - side_normal_count)
-                    if needed_for_side != remaining_wilds:
-                        continue
-                else:
-                    # All remaining are wilds (2 wilds for the pair)
-                    side_rank = Rank(self.level)
+            else:
+                # All remaining are wilds (2 wilds for the pair)
+                side_rank = Rank(self.level)
 
-                if side_rank == triple_rank:
-                    continue
+            if side_rank == triple_rank:
+                continue
 
             # Build the combo
             wild_indices = tuple(
@@ -323,7 +310,7 @@ class ComboParser:
                 main_rank=triple_rank,
                 length=expected_total,
                 secondary_rank=side_rank,
-                side_type='single' if side_size == 1 else 'pair',
+                side_type='pair',
                 wild_indices=wild_indices,
                 level=self.level,
             )

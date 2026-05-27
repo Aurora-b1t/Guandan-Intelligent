@@ -20,14 +20,13 @@ class ComboType(IntEnum):
     SINGLE = 1
     PAIR = 2
     TRIPLE = 3
-    TRIPLE_SINGLE = 4       # 三带一
-    TRIPLE_PAIR = 5          # 三带二
-    STRAIGHT = 6             # 顺子 (5+ consecutive singles)
-    CONSECUTIVE_PAIRS = 7    # 连对/板凳 (3+ consecutive pairs)
-    CONSECUTIVE_TRIPLES = 8  # 钢板/飞机 (2+ consecutive triples)
-    NORMAL_BOMB = 9          # 普通炸弹 (4-8 of same rank, including wilds)
-    STRAIGHT_FLUSH = 10      # 同花顺 (5 consecutive same suit)
-    ROCKET = 11              # 火箭/王炸 (Big Joker + Small Joker)
+    TRIPLE_PAIR = 4          # 三带二
+    STRAIGHT = 5             # 顺子 (5+ consecutive singles)
+    CONSECUTIVE_PAIRS = 6    # 连对/板凳 (3+ consecutive pairs)
+    CONSECUTIVE_TRIPLES = 7  # 钢板/飞机 (2+ consecutive triples)
+    NORMAL_BOMB = 8          # 普通炸弹 (4-8 of same rank, including wilds)
+    STRAIGHT_FLUSH = 9       # 同花顺 (5 consecutive same suit)
+    ROCKET = 10              # 火箭/王炸 (Big Joker + Small Joker)
 
 
 BOMB_TYPES: FrozenSet[ComboType] = frozenset({
@@ -46,8 +45,8 @@ class Combo:
         cards: The actual card objects forming this combo.
         main_rank: The rank used for comparison (semantics vary by type).
         length: Total number of cards in the combo.
-        secondary_rank: For triple+single/pair: the side component's rank.
-        side_type: For triple+single/pair: 'single' or 'pair'.
+        secondary_rank: For triple+pair: the side component's rank.
+        side_type: For triple+pair: 'pair'.
         suit: For straight flush: the suit of the flush.
         wild_indices: Indices of wild cards within the cards tuple.
     """
@@ -84,7 +83,6 @@ NON_BOMB_FOLLOW_TYPES: FrozenSet[ComboType] = frozenset({
     ComboType.SINGLE,
     ComboType.PAIR,
     ComboType.TRIPLE,
-    ComboType.TRIPLE_SINGLE,
     ComboType.TRIPLE_PAIR,
     ComboType.STRAIGHT,
     ComboType.CONSECUTIVE_PAIRS,

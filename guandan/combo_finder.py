@@ -97,8 +97,6 @@ class ComboFinder:
             return self._beat_pair(table_combo)
         elif ct == ComboType.TRIPLE:
             return self._beat_triple(table_combo)
-        elif ct == ComboType.TRIPLE_SINGLE:
-            return self._beat_triple_side(table_combo, 1)
         elif ct == ComboType.TRIPLE_PAIR:
             return self._beat_triple_side(table_combo, 2)
         elif ct in (ComboType.STRAIGHT, ComboType.STRAIGHT_FLUSH):
@@ -161,16 +159,11 @@ class ComboFinder:
                     if combo and combo.combo_type == ComboType.TRIPLE:
                         results.append(combo)
 
-        # Triple+Single and Triple+Pair
+        # Triple+Pair (三带二)
         for rank, cards in self._by_rank.items():
             if len(cards) >= 3:
                 triples = list(combinations(cards, 3))
-                all_others = [c for r2, cs in self._by_rank.items() if r2 != rank for c in cs]
                 for triple in triples:
-                    for side in all_others:
-                        combo = self._parser.parse(list(triple) + [side])
-                        if combo and combo.combo_type == ComboType.TRIPLE_SINGLE:
-                            results.append(combo)
                     for r2, sc in self._by_rank.items():
                         if r2 != rank and len(sc) >= 2:
                             for side_pair in combinations(sc, 2):
@@ -274,9 +267,8 @@ class ComboFinder:
         return best
 
     def _beat_triple_side(self, target: Combo, side_size: int) -> Optional[Combo]:
+        """Find a triple+pair (三带二) that beats the target."""
         t_eff = effective_rank(target.main_rank, self.level)
-        total = 3 + side_size
-        best = None
         for rank, cards in self._by_rank.items():
             if effective_rank(rank, self.level) <= t_eff:
                 continue
@@ -284,26 +276,20 @@ class ComboFinder:
             # Try with 0 wilds for triple
             if nc >= 3:
                 triples = list(combinations(cards, 3))
-                others = [c for r2, cs in self._by_rank.items() if r2 != rank for c in cs]
                 for triple in triples:
-                    if side_size == 1 and others:
-                        combo = self._parser.parse(list(triple) + [others[0]])
-                        if combo:
-                            return combo
-                    if side_size == 2:
-                        for r2, sc in self._by_rank.items():
-                            if r2 != rank and len(sc) >= 2:
-                                combo = self._parser.parse(list(triple) + list(sc[:2]))
-                                if combo:
-                                    return combo
+                    for r2, sc in self._by_rank.items():
+                        if r2 != rank and len(sc) >= 2:
+                            combo = self._parser.parse(list(triple) + list(sc[:2]))
+                            if combo:
+                                return combo
             # With 1 wild for triple
             if nc >= 2 and self.wild_count >= 1:
                 triple_base = list(cards[:2]) + [self.wilds[0]]
-                others = [c for r2, cs in self._by_rank.items() if r2 != rank for c in cs]
-                if side_size == 1 and others:
-                    combo = self._parser.parse(triple_base + [others[0]])
-                    if combo:
-                        return combo
+                for r2, sc in self._by_rank.items():
+                    if r2 != rank and len(sc) >= 2:
+                        combo = self._parser.parse(triple_base + list(sc[:2]))
+                        if combo:
+                            return combo
         return self._find_any_bomb()
 
     def _beat_straight(self, target: Combo) -> Optional[Combo]:

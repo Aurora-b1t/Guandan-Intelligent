@@ -49,9 +49,13 @@ def score_play(
     if table_combo is None:
         positional += params.lead_bonus
         rv = effective_rank(candidate.main_rank, level)
-        if rv >= 15:
-            positional += params.joker_lead_penalty
-        elif rv >= 13:
+        # Per-card penalty: count cards matching main_rank in this combo
+        rank_card_count = sum(1 for c in candidate.cards if c.rank == candidate.main_rank)
+        if rv >= 16:  # jokers
+            positional += params.joker_lead_penalty * max(1, rank_card_count)
+        elif rv == 15:  # level card (级牌)
+            positional += params.rank_card_lead_penalty * max(1, rank_card_count)
+        elif rv >= 13:  # K, A
             positional += params.high_rank_lead_penalty
     else:
         if not candidate.is_bomb:

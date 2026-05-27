@@ -16,14 +16,14 @@ from typing import Dict, List, Optional
 from guandan.card import Card
 
 
-def _pick(rank_val: int, count: int, used: set) -> List[int]:
-    """Find `count` card IDs of given rank, skip wilds at level 2. Track used."""
+def _pick(rank_val: int, count: int, used: set, level: int = 2) -> List[int]:
+    """Find `count` card IDs of given rank, skip wilds at the current level."""
     result = []
     for i in range(108):
         if i in used:
             continue
         c = Card.from_id(i)
-        if c.rank.value == rank_val and not c.is_wild(2):
+        if c.rank.value == rank_val and not c.is_wild(level):
             result.append(i)
             used.add(i)
             if len(result) >= count:
@@ -31,17 +31,17 @@ def _pick(rank_val: int, count: int, used: set) -> List[int]:
     raise ValueError(f"Not enough cards for rank {rank_val} (need {count}, found {len(result)})")
 
 
-def _picks(rank_vals: List[int], counts: List[int], used: set) -> List[int]:
+def _picks(rank_vals: List[int], counts: List[int], used: set, level: int = 2) -> List[int]:
     """Pick cards of multiple ranks."""
     result = []
     for r, c in zip(rank_vals, counts):
-        result.extend(_pick(r, c, used))
+        result.extend(_pick(r, c, used, level))
     return result
 
 
-def _hand(ranks: List[int], counts: List[int], used: set) -> List[int]:
+def _hand(ranks: List[int], counts: List[int], used: set, level: int = 2) -> List[int]:
     """Build a hand: pick specific counts of specific ranks."""
-    return _picks(ranks, counts, used)
+    return _picks(ranks, counts, used, level)
 
 
 @dataclass
@@ -80,12 +80,12 @@ def _make_scenario(id: str, name: str, category: str, description: str,
     Remaining (unreferenced) cards are automatically treated as played.
     """
     used = set()
-    hand = _hand(hand_ranks, hand_counts, used)
-    o1 = _hand(opp1[0], opp1[1], used)
-    o2 = _hand(opp2[0], opp2[1], used)
-    o3 = _hand(opp3[0], opp3[1], used)
-    table = _hand(table_ranks, table_counts, used) if table_ranks else None
-    expected = _hand(expected_play_ranks, expected_play_counts, used) if expected_play_ranks else None
+    hand = _hand(hand_ranks, hand_counts, used, level)
+    o1 = _hand(opp1[0], opp1[1], used, level)
+    o2 = _hand(opp2[0], opp2[1], used, level)
+    o3 = _hand(opp3[0], opp3[1], used, level)
+    table = _hand(table_ranks, table_counts, used, level) if table_ranks else None
+    expected = _hand(expected_play_ranks, expected_play_counts, used, level) if expected_play_ranks else None
 
     return Scenario(
         id=id, name=name, category=category, description=description,
@@ -232,6 +232,33 @@ DEDUCTION_SCENARIOS = [
         table_ranks=None, table_player=1,
         expected_play_ranks=[3], expected_play_counts=[6],
         reasoning="出连对(334455)一次出6张，留单A收尾"
+    ),
+    _make_scenario(
+        id="rank_card_single_2_level_2",
+        name="级牌：单2应过牌",
+        category="deduction",
+        description="等级2。桌面单2(右家出)。手牌JA无王牌无炸弹。2是级牌(eff=15)，J和A都打不过，应过牌。",
+        hand_ranks=[14, 11], hand_counts=[1, 1],
+        opp1=([12, 9], [1, 1]),
+        opp2=([13, 8], [1, 1]),
+        opp3=([4, 3], [1, 1]),
+        table_ranks=[2], table_counts=[1], table_player=1,
+        expected_play_ranks=None, expected_play_counts=None,
+        expected_pass=True,
+        reasoning="级牌2(eff=15)>A(eff=14)>J(eff=11)，无牌可压，应过牌"
+    ),
+    _make_scenario(
+        id="rank_card_single_2_level_3",
+        name="级牌：等级3时2非级牌",
+        category="deduction",
+        description="等级3。桌面单2(右家出)。手牌J。2非级牌(eff=2)，J(eff=11)可压，应出J。",
+        hand_ranks=[11], hand_counts=[1],
+        opp1=([14, 6], [1, 1]),
+        opp2=([13, 5], [1, 1]),
+        opp3=([12, 4], [1, 1]),
+        table_ranks=[2], table_counts=[1], table_player=1, level=3,
+        expected_play_ranks=[11], expected_play_counts=[1],
+        reasoning="等级3时2仅为普通牌(eff=2)，J(eff=11)可压"
     ),
 ]
 
