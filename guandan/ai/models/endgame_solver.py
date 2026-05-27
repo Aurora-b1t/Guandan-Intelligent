@@ -31,6 +31,10 @@ class EndgameExactSolver(TestableModel):
         super().__init__(**config)
         self._start_time = 0
         self._time_limit = config.get("time_limit_ms", 20000) / 1000.0
+        self._nodes_searched = 0
+        self._max_depth_reached = 0
+        self._terminal_evals = 0
+        self._search_timed_out = False
 
     def analyze(self, view: PlayerView) -> AnalyzeResult:
         t0 = time.time()
@@ -72,6 +76,11 @@ class EndgameExactSolver(TestableModel):
             sim_state = self._clone_state(state)
             self._apply_play(sim_state, pid, c)
 
+            self._nodes_searched = 0
+            self._max_depth_reached = 0
+            self._terminal_evals = 0
+            self._search_timed_out = False
+
             # Evaluate outcome
             outcome = self._evaluate(sim_state, (pid + 1) % 4, my_team, 0)
             # Normalize to 0-1 scale
@@ -84,6 +93,13 @@ class EndgameExactSolver(TestableModel):
                 score=score,
                 win_rate=score,
                 reasoning=f"精确推演值: {outcome}",
+                detail={
+                    "nodes_searched": self._nodes_searched,
+                    "max_depth_reached": self._max_depth_reached,
+                    "terminal_evals": self._terminal_evals,
+                    "timed_out": self._search_timed_out,
+                    "exact_value": outcome,
+                },
             ))
 
         results.sort(key=lambda r: r.score or 0, reverse=True)
@@ -112,11 +128,15 @@ class EndgameExactSolver(TestableModel):
 
     def _evaluate(self, state: GameState, current_pid: int, my_team: int, depth: int) -> int:
         """Recursive evaluation. Returns a heuristic score (higher = better for my_team)."""
+        self._nodes_searched += 1
+        self._max_depth_reached = max(self._max_depth_reached, depth)
         if time.time() - self._start_time > self._time_limit:
+            self._search_timed_out = True
             return 0
         if depth > 20:
             return 0
         if len(state.finished_positions) >= 3:
+            self._terminal_evals += 1
             from ...score import calculate_result
             result = calculate_result(state.finished_positions)
             teams = {0: 0, 1: 1, 2: 0, 3: 1}

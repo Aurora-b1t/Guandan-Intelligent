@@ -118,11 +118,13 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
 .mres .mw { color: #27ae60; font-weight: bold; font-size: 0.85em; }
 .mres .me { color: #e74c3c; }
 .mres .mcand summary { color: #888; font-size: 0.8em; cursor: pointer; }
-.crow { display: flex; align-items: center; gap: 4px; padding: 1px 3px; border-bottom: 1px solid rgba(255,255,255,0.02); font-size: 0.78em; }
+.crow { padding: 2px 3px; border-bottom: 1px solid rgba(255,255,255,0.02); font-size: 0.78em; }
 .crow.best { background: rgba(39,174,96,0.08); }
+.crow .cr-main { display: flex; align-items: center; gap: 4px; }
 .crow .cwr { display: flex; align-items: center; gap: 2px; flex: 1; justify-content: flex-end; }
 .crow .cwr .wbar { display: inline-block; height: 7px; background: #27ae60; border-radius: 2px; min-width: 2px; }
 .crow .cwr .wtxt { font-size: 0.8em; color: #aaa; min-width: 38px; text-align: right; }
+.crow .cr-detail { padding-left: 6px; }
 
 /* Debug */
 .dbg-sect { margin-bottom: 2px; }
@@ -130,6 +132,27 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
 .dbg-ttl:hover { background: rgba(255,255,255,0.05); }
 .dbg-body { display: none; padding: 2px 5px; font-size: 0.73em; }
 .dbg-sect.open .dbg-body { display: block; }
+
+/* Modal overlay for model info panel */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; justify-content:center; align-items:center; }
+.modal-overlay.on { display:flex; }
+.modal-panel { background:#1e1e32; border:1px solid #444; border-radius:10px; max-width:560px; width:90%; max-height:80vh; overflow-y:auto; padding:16px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+.modal-panel h2 { font-size:1em; color:#daa520; margin:0 0 4px; display:flex; align-items:center; justify-content:space-between; }
+.modal-panel h2 button { background:none; border:none; color:#888; cursor:pointer; font-size:1.2em; padding:0 4px; }
+.modal-panel h2 button:hover { color:#e74c3c; }
+.modal-panel h3 { font-size:0.82em; color:#ccc; margin:8px 0 4px; border-bottom:1px solid rgba(255,255,255,0.06); padding-bottom:2px; }
+.modal-panel .alg-flow { background:rgba(255,255,255,0.02); border-radius:5px; padding:6px 10px; font-size:0.74em; color:#bbb; line-height:1.55; white-space:pre-line; }
+.modal-panel .param-grid { display:flex; flex-direction:column; gap:2px; }
+.modal-panel .param-row { display:flex; align-items:center; gap:6px; padding:2px 4px; border-radius:3px; font-size:0.76em; }
+.modal-panel .param-row:hover { background:rgba(255,255,255,0.02); }
+.modal-panel .param-row .pk { flex:1; color:#aaa; font-size:0.82em; }
+.modal-panel .param-row .pv { color:#daa520; font-weight:bold; min-width:42px; text-align:center; font-size:0.9em; }
+.modal-panel .param-row button.step { background:#333; color:#ccc; border:1px solid #555; border-radius:3px; width:22px; height:22px; cursor:pointer; font-size:0.85em; padding:0; line-height:1; }
+.modal-panel .param-row button.step:hover { background:#555; color:#fff; }
+.modal-panel .param-row input[type="number"] { background:#222; color:#daa520; border:1px solid #444; border-radius:3px; padding:1px 4px; width:56px; text-align:center; font-size:0.9em; font-weight:bold; }
+.modal-panel .param-row select { background:#222; color:#ddd; border:1px solid #444; border-radius:3px; padding:1px 3px; font-size:0.85em; }
+.modal-panel .panel-actions { display:flex; gap:6px; justify-content:flex-end; margin-top:10px; }
+.modal-panel .param-preview { font-size:0.68em; color:#666; margin-top:1px; }
 
 @media (max-width: 900px) { .arena-row.on { flex-direction: column; } .aside { max-height: 180px; } .arena-tbl { min-height: 300px; } }
 </style>
@@ -203,6 +226,11 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
   </div>
 </div>
 
+<!-- Model info floating panel -->
+<div class="modal-overlay" id="mdl-overlay" onclick="if(event.target===this)closeModelPanel()">
+  <div class="modal-panel" id="mdl-panel"></div>
+</div>
+
 <script>
 // ==================================================================
 // Card utilities
@@ -250,6 +278,367 @@ let T = { cat:'sampling', sid:null, simId:null, simState:null, profs:[], res:[],
 const CCN = {deduction:'确定推演',sampling:'不确定采样',endgame:'残局求解',opening:'开局评估'};
 
 // ==================================================================
+// Model algorithm descriptions and parameters
+// ==================================================================
+const MODEL_INFO = {
+  informed: {
+    name: 'Informed 控权评分',
+    desc: '利用已知四家手牌信息，对每个候选牌型做加权评分，选出最优出牌。',
+    flow: `1. 生成候选牌型
+   · 首家时：枚举低单张、对子、三条、顺子、炸弹等
+   · 跟牌时：枚举所有能压过桌面的同类型牌型 + 炸弹
+2. 对每个候选计算评分（所有权重可调）：
+   · 轮次节省 = (打出前手牌轮次 - 打出后手牌轮次) × round_weight
+   · 检查下一家谁能压制此牌型：
+     - 无人能压 → +no_counter_bonus
+     - 队友能压 → +teammate_cover_bonus
+     - 对手能压 → -opponent_counter_penalty
+   · 炸弹检测：
+     - 首家出炸弹 → -bomb_lead_penalty
+     - 有更优非炸弹方案却出炸弹 → -bomb_overuse_penalty
+3. 过牌评分：
+   · 队友可接 → +pass_teammate_bonus
+   · 本队已有控权 → +pass_control_bonus
+   · 其他情况 → pass_neutral
+4. 按总分降序排列，取最高分为推荐选择`,
+    params: [
+      {key:'round_weight', label:'轮次节省权重', type:'float', dflt:5.0, step:0.5},
+      {key:'no_counter_bonus', label:'无人能压奖励', type:'float', dflt:8.0, step:0.5},
+      {key:'teammate_cover_bonus', label:'队友可接奖励', type:'float', dflt:2.0, step:0.5},
+      {key:'opponent_counter_penalty', label:'对手能压惩罚', type:'float', dflt:3.0, step:0.5},
+      {key:'bomb_lead_penalty', label:'首家出炸弹惩罚', type:'float', dflt:5.0, step:0.5},
+      {key:'bomb_overuse_penalty', label:'出炸弹却非必要惩罚', type:'float', dflt:4.0, step:0.5},
+      {key:'pass_teammate_bonus', label:'过牌队友可接奖励', type:'float', dflt:3.0, step:0.5},
+      {key:'pass_control_bonus', label:'过牌本队控权奖励', type:'float', dflt:2.0, step:0.5},
+      {key:'pass_neutral', label:'过牌基线分', type:'float', dflt:0.0, step:0.5},
+    ]
+  },
+  round: {
+    name: 'Round 轮次评分',
+    desc: '基于精确轮次估计(estimate_rounds)，评估每个候选对团队轮次差距的影响。',
+    flow: `1. 计算当前团队轮次和对手轮次基线
+   · 己方总轮次 = Σ队友 estimate_rounds(手牌)
+   · 对手总轮次 = Σ对手 estimate_rounds(手牌)
+   · 差距 = 对手轮次 - 己方轮次
+2. 对每个候选模拟打出后的状态：
+   · 己方轮次变化 = 打出前 - 打出后（正值=改善）
+   · 差距变化 = 新差距 - 旧差距（负值=追近）
+   · round_score = 轮次变化 × round_delta_weight
+   · gap_score = 差距变化 × gap_improve_weight（追近为负→扣分或加分取方向）
+3. 控权检查（同Informed）：
+   · 无人能压 → +no_counter_bonus
+   · 队友能压 → +teammate_cover_bonus
+   · 对手能压 → -opponent_counter_penalty
+4. 过牌评分：
+   · 队友可接 → +pass_teammate_bonus
+   · 其他 → pass_default
+5. 按总分降序排列，取最高分`,
+    params: [
+      {key:'round_delta_weight', label:'轮次改善权重', type:'float', dflt:8.0, step:0.5},
+      {key:'gap_improve_weight', label:'差距改善权重', type:'float', dflt:3.0, step:0.5},
+      {key:'no_counter_bonus', label:'无人能压奖励', type:'float', dflt:6.0, step:0.5},
+      {key:'teammate_cover_bonus', label:'队友可接奖励', type:'float', dflt:2.0, step:0.5},
+      {key:'opponent_counter_penalty', label:'对手能压惩罚', type:'float', dflt:2.0, step:0.5},
+      {key:'pass_teammate_bonus', label:'过牌队友可接奖励', type:'float', dflt:4.0, step:0.5},
+      {key:'pass_default', label:'过牌基线', type:'float', dflt:1.0, step:0.5},
+    ]
+  },
+  exact: {
+    name: 'Exact 精确求解',
+    desc: '终局(≤6张)极小化极大搜索。穷举所有可能的出牌序列，找理论最优解。无权重，纯计算。',
+    flow: `1. 检查手牌总数：≤24张（每家≤6）才可求解
+2. 生成候选牌型（同Informed）
+3. 对每个候选（含过牌），递归极小化极大搜索：
+   · 己方出牌后，轮到下一家
+   · 己方队伍节点：选最大收益
+   · 对手队伍节点：选最小收益（对我们最不利）
+   · 终局条件：≥3人完成 → 根据名次判定胜负
+   · 搜索深度限制：max_depth（默认20）
+   · 超时保护：time_limit_ms
+4. 返回每个候选的理论精确值（归一化到0-1）
+5. 选最高分候选`,
+    params: [
+      {key:'max_depth', label:'最大搜索深度', type:'int', dflt:20, step:1},
+      {key:'max_cards', label:'最大手牌数', type:'int', dflt:6, step:1},
+      {key:'time_limit_ms', label:'超时限制(ms)', type:'int', dflt:20000, step:1000},
+    ]
+  },
+  blind: {
+    name: 'Blind 盲评',
+    desc: '只看自己手牌，不看对手信息，用12个AIParams权重做启发式打分。作为AI智能的基线。',
+    flow: `1. 生成候选牌型（同Informed/HeuristicAgent）
+2. 对每个候选（含过牌）计算加权得分：
+   · 效率分 = (牌型张数/总张数) × efficiency_weight
+   · 炸弹处理：
+     - 首家出炸 → bomb_lead_penalty（默认扣12分）
+     - 炸非炸 → bomb_overuse_penalty（默认扣10分）
+     - 炸对炸 → bomb_vs_bomb_bonus（+2分）
+   · 位置分：首家 +lead_bonus，跟牌 +follow_bonus
+   · 出牌利用率：牌型张数 × card_usage_weight
+   · 特殊惩罚：Joker首发 -joker_lead_penalty，K+首发 penalty
+3. 过牌判断：最优候选分 < pass_threshold → 过牌
+4. 按总分降序输出`,
+    params: [
+      {key:'efficiency_weight', label:'效率权重', type:'float', dflt:20.0, step:1.0},
+      {key:'round_weight', label:'轮次权重', type:'float', dflt:8.0, step:0.5},
+      {key:'bomb_lead_penalty', label:'首家出炸弹惩罚', type:'float', dflt:-12.0, step:1.0},
+      {key:'bomb_overuse_penalty', label:'有过炸惩罚', type:'float', dflt:-10.0, step:1.0},
+      {key:'bomb_vs_bomb_bonus', label:'炸弹对炸弹奖励', type:'float', dflt:2.0, step:0.5},
+      {key:'lead_bonus', label:'首先出牌奖励', type:'float', dflt:1.0, step:0.5},
+      {key:'follow_bonus', label:'跟牌奖励', type:'float', dflt:1.0, step:0.5},
+      {key:'joker_lead_penalty', label:'Joker首发惩罚', type:'float', dflt:-1.0, step:0.5},
+      {key:'high_rank_lead_penalty', label:'高牌(K+)首发惩罚', type:'float', dflt:-0.3, step:0.1},
+      {key:'card_usage_weight', label:'出牌利用率权重', type:'float', dflt:0.3, step:0.1},
+      {key:'pass_threshold', label:'过牌阈值', type:'float', dflt:0.0, step:0.5},
+      {key:'sim_pass_prob', label:'模拟过牌概率', type:'float', dflt:0.15, step:0.05},
+    ]
+  },
+  mc: {
+    name: 'MC 蒙特卡洛',
+    desc: '采样对手手牌 → 内层模型模拟至终局 → 统计胜率。通过大量随机采样逼近真实期望。',
+    flow: `1. 候选生成（由enumerator控制）：
+   · full: 穷举所有合法牌型
+   · top_n: 启发式预筛TopN
+   · memory: 记忆感知排序
+2. 对每个候选，执行 num_samples 次模拟：
+   a. 采样(sampler)：从unseen牌堆随机分配对手手牌
+      - random: 纯随机分配
+      - constrained: 约束采样（利用已知信息）
+   b. 模拟(inner)：用内层模型模拟剩余游戏
+      - Blind/Informed/Round/Exact 逐步决策至终局
+   c. 统计：我方队伍胜利 → win+1
+3. 胜率 = wins / samples → 投票选出最优候选
+4. 超时保护：time_limit_ms`,
+    params: [
+      {key:'num_samples', label:'采样次数', type:'int', dflt:128, step:16},
+      {key:'time_limit_ms', label:'超时限制(ms)', type:'int', dflt:10000, step:1000},
+      {key:'sampler', label:'采样器', type:'select', dflt:'random', opts:{random:'Random 纯随机',constrained:'Constrained 约束'}},
+      {key:'inner', label:'内层模型', type:'ref', dflt:'informed', refs:['blind','informed','round','exact']},
+      {key:'enumerator', label:'候选枚举', type:'ref', dflt:'full', refs:['full','top_n','memory']},
+    ]
+  },
+  ismcts: {
+    name: 'IS-MCTS 树搜索',
+    desc: '信息集MC树搜索：构建UCB搜索树，每次迭代经历选择→展开→模拟→回传四阶段。',
+    flow: `1. 初始化根节点（当前状态）
+2. 循环 max_iterations 次（或超时）：
+   a. 选择(Select): 从根节点沿UCB公式下行到叶节点
+      UCB = wins/visits + ucb_c × √(ln(parent_visits)/visits)
+   b. 展开(Expand): 随机选一个未尝试的动作，创建子节点
+   c. 模拟(Simulate): 用内层模型从子节点模拟至终局
+   d. 回传(Backpropagate): 将结果沿路径向上更新wins/visits
+3. 返回根节点各子节点的胜率统计
+4. 选访问次数最多的子节点作为推荐`,
+    params: [
+      {key:'max_iterations', label:'最大迭代', type:'int', dflt:500, step:50},
+      {key:'time_limit_ms', label:'超时限制(ms)', type:'int', dflt:10000, step:1000},
+      {key:'ucb_c', label:'UCB探索常数', type:'float', dflt:1.4, step:0.1},
+      {key:'sampler', label:'采样器', type:'select', dflt:'random', opts:{random:'Random 纯随机',constrained:'Constrained 约束'}},
+      {key:'inner', label:'内层模型', type:'ref', dflt:'informed', refs:['blind','informed','round','exact']},
+      {key:'enumerator', label:'候选枚举', type:'ref', dflt:'full', refs:['full','top_n','memory']},
+    ]
+  },
+  top_n: {
+    name: 'TopN 预筛枚举',
+    desc: '预评分后取前N个候选，减少MC采样空间。',
+    flow: `1. 用预评分器(pre_scorer)对所有候选打分
+2. 取前 top_n 个候选返回`,
+    params: [
+      {key:'top_n', label:'保留候选数', type:'int', dflt:5, step:1},
+      {key:'pre_scorer', label:'预评分器', type:'select', dflt:'blind', opts:{blind:'Blind',informed:'Informed',round:'Round'}},
+    ]
+  },
+  memory: {
+    name: 'Memory 记忆感知枚举',
+    desc: '根据过牌历史调整候选顺序，无额外参数。',
+    flow: `1. 枚举所有合法候选
+2. 根据历史过牌记录调整顺序（避免重复出已被压制的牌型）
+3. 返回有序候选列表`,
+    params: []
+  },
+  full: {
+    name: 'Full 全面枚举',
+    desc: '穷举所有同类型可出牌型+炸弹，无参数。',
+    flow: `1. 枚举所有合法同类型跟牌
+2. 附加炸弹选项
+3. 返回完整候选列表`,
+    params: []
+  },
+};
+
+// ==================================================================
+// Floating panel management
+// ==================================================================
+let _panelCtx = null;  // {tab:'P'|'T', profileIdx:number, modelId:string}
+
+function _renderParamGrid(params, prof, prefix) {
+  let html = '';
+  for (const p of params) {
+    const pkey = prefix ? prefix+'.'+p.key : p.key;
+    const val = prof[pkey] !== undefined ? prof[pkey] : (prof[p.key] !== undefined ? prof[p.key] : p.dflt);
+    if (p.type === 'select') {
+      const opts = p.opts || {};
+      html += `<div class="param-row"><span class="pk">${p.label}</span><select onchange="updatePanelParam('${pkey}',this.value)">`;
+      for (const [v,label] of Object.entries(opts)) {
+        html += `<option value="${v}"${String(val)===v?' selected':''}>${label}</option>`;
+      }
+      html += `</select></div>`;
+    } else if (p.type === 'ref') {
+      const refs = p.refs || [];
+      const refLabels = {blind:'Blind',informed:'Informed',round:'Round',exact:'Exact',full:'全面枚举',top_n:'预筛TopN',memory:'记忆感知'};
+      html += `<div class="param-row"><span class="pk">${p.label}</span><select onchange="updatePanelParam('${pkey}',this.value)">`;
+      for (const r of refs) {
+        html += `<option value="${r}"${String(val)===r?' selected':''}>${refLabels[r]||r}</option>`;
+      }
+      html += `</select></div>`;
+    } else {
+      const step = p.step || (p.type==='int'?1:0.5);
+      html += `<div class="param-row"><span class="pk">${p.label}</span>`;
+      html += `<button class="step" onclick="stepPanelParam('${pkey}',${-step})">−</button>`;
+      html += `<input type="number" value="${val}" step="${step}" onchange="updatePanelParam('${pkey}',parseFloat(this.value))" id="pp-${pkey.replace('.','-')}">`;
+      html += `<button class="step" onclick="stepPanelParam('${pkey}',${step})">+</button>`;
+      html += `</div>`;
+    }
+  }
+  return html;
+}
+
+function openModelPanel(tab, idx, modelId) {
+  const info = MODEL_INFO[modelId];
+  if (!info) return;
+  _panelCtx = {tab, idx, modelId};
+
+  const prof = (tab==='P'?P:T).profs[idx] || {};
+
+  let html = `<h2>${info.name}<button onclick="closeModelPanel()">✕</button></h2>`;
+  html += `<div style="color:#888;font-size:0.78em;margin-bottom:6px">${info.desc}</div>`;
+  html += `<h3>算法流程</h3><div class="alg-flow">${info.flow}</div>`;
+  html += `<h3>可调参数</h3><div class="param-grid">`;
+  html += _renderParamGrid(info.params, prof, '');
+  html += `</div>`;
+
+  // For MC/ISMCTS, also show inner model and enumerator params
+  if (modelId === 'mc' || modelId === 'ismcts') {
+    const innerId = prof.inner || 'informed';
+    const innerInfo = MODEL_INFO[innerId];
+    if (innerInfo) {
+      html += `<h3>内层模型: ${innerInfo.name} 参数</h3><div class="param-grid">`;
+      html += _renderParamGrid(innerInfo.params, prof, 'inner');
+      html += `</div>`;
+    }
+    const enumId = prof.enumerator || 'full';
+    const enumInfo = MODEL_INFO[enumId];
+    if (enumInfo && enumInfo.params && enumInfo.params.length) {
+      html += `<h3>枚举器: ${enumInfo.name} 参数</h3><div class="param-grid">`;
+      html += _renderParamGrid(enumInfo.params, prof, 'enumerator');
+      html += `</div>`;
+    }
+  }
+
+  html += `<div class="panel-actions">
+    <button class="btn btn-gy btn-sm" onclick="resetPanelParams()">重置默认</button>
+    <button class="btn btn-gn btn-sm" onclick="applyPanelParams()">应用</button>
+    <button class="btn btn-gy btn-sm" onclick="closeModelPanel()">关闭</button>
+  </div>`;
+
+  document.getElementById('mdl-panel').innerHTML = html;
+  document.getElementById('mdl-overlay').classList.add('on');
+}
+
+function closeModelPanel() {
+  document.getElementById('mdl-overlay').classList.remove('on');
+  _panelCtx = null;
+}
+
+function updatePanelParam(key, val) {
+  if (!_panelCtx) return;
+  const prof = (_panelCtx.tab==='P'?P:T).profs[_panelCtx.idx];
+  if (!prof) return;
+  prof[key] = val;
+}
+
+function stepPanelParam(key, delta) {
+  if (!_panelCtx) return;
+  const prof = (_panelCtx.tab==='P'?P:T).profs[_panelCtx.idx];
+  if (!prof) return;
+  // Handle dotted keys like "inner.round_weight"
+  const parts = key.split('.');
+  let target = prof;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (target[parts[i]] === undefined) target[parts[i]] = {};
+    target = target[parts[i]];
+  }
+  const lastKey = parts[parts.length - 1];
+  // Find default from MODEL_INFO
+  let dflt = 0;
+  if (parts.length === 1) {
+    dflt = MODEL_INFO[_panelCtx.modelId]?.params.find(p=>p.key===key)?.dflt || 0;
+  } else {
+    const subInfo = MODEL_INFO[parts[0]];
+    if (subInfo) dflt = subInfo.params.find(p=>p.key===lastKey)?.dflt || 0;
+  }
+  const cur = target[lastKey] !== undefined ? target[lastKey] : dflt;
+  target[lastKey] = Math.round((cur + delta) * 100) / 100;
+  const inpId = 'pp-' + key.replace('.','-');
+  const inp = document.getElementById(inpId);
+  if (inp) inp.value = target[lastKey];
+}
+
+function updatePanelParam(key, val) {
+  if (!_panelCtx) return;
+  const prof = (_panelCtx.tab==='P'?P:T).profs[_panelCtx.idx];
+  if (!prof) return;
+  const parts = key.split('.');
+  let target = prof;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (target[parts[i]] === undefined) target[parts[i]] = {};
+    target = target[parts[i]];
+  }
+  target[parts[parts.length - 1]] = val;
+}
+
+function applyPanelParams() {
+  if (!_panelCtx) return;
+  // Re-render profiles to show updated param preview
+  if (_panelCtx.tab === 'P') renderProfsP(); else renderProfsT();
+  closeModelPanel();
+}
+
+function _resetParamsForInfo(info, prof, prefix) {
+  if (!info) return;
+  for (const p of info.params) {
+    const pkey = prefix ? prefix+'.'+p.key : p.key;
+    const parts = pkey.split('.');
+    let target = prof;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (target[parts[i]] === undefined) target[parts[i]] = {};
+      target = target[parts[i]];
+    }
+    target[parts[parts.length - 1]] = p.dflt;
+    const inpId = 'pp-' + pkey.replace('.','-');
+    const inp = document.getElementById(inpId);
+    if (inp) inp.value = p.dflt;
+  }
+}
+
+function resetPanelParams() {
+  if (!_panelCtx) return;
+  const info = MODEL_INFO[_panelCtx.modelId];
+  if (!info) return;
+  const prof = (_panelCtx.tab==='P'?P:T).profs[_panelCtx.idx];
+  if (!prof) return;
+  _resetParamsForInfo(info, prof, '');
+  // Also reset inner/enumerator params for MC/ISMCTS
+  const modelId = _panelCtx.modelId;
+  if (modelId === 'mc' || modelId === 'ismcts') {
+    const innerInfo = MODEL_INFO[prof.inner || 'informed'];
+    _resetParamsForInfo(innerInfo, prof, 'inner');
+    const enumInfo = MODEL_INFO[prof.enumerator || 'full'];
+    _resetParamsForInfo(enumInfo, prof, 'enumerator');
+  }
+}
+
+// ==================================================================
 // Init
 // ==================================================================
 async function init() {
@@ -262,16 +651,16 @@ async function init() {
   scens = (sd.scenarios||[]).sort((a,b)=>a.category.localeCompare(b.category)||a.name.localeCompare(b.name));
   cats = sd.categories||[];
 
-  // Tab 1
+  // Tab 1 — 完全信息：仅确定推演
   const ps = document.getElementById('pcat');
-  ps.innerHTML = cats.filter(c=>c==='deduction'||c==='endgame').map(c=>`<option value="${c}">${CCN[c]||c}</option>`).join('');
+  ps.innerHTML = cats.filter(c=>c==='deduction').map(c=>`<option value="${c}">${CCN[c]||c}</option>`).join('');
   ps.value='deduction'; loadScP(); setProfsP();
   const firstP = scens.find(s=>s.category==='deduction') || scens[0];
   if (firstP) selP(firstP.id);
 
-  // Tab 2
+  // Tab 2 — 真实牌桌：不确定采样 + 残局求解 + 开局评估
   const ts = document.getElementById('tcat');
-  ts.innerHTML = cats.map(c=>`<option value="${c}">${CCN[c]||c}</option>`).join('');
+  ts.innerHTML = cats.filter(c=>c==='sampling'||c==='endgame'||c==='opening').map(c=>`<option value="${c}">${CCN[c]||c}</option>`).join('');
   ts.value='sampling'; loadScT(); setProfsT();
   const firstT = scens.find(s=>s.category==='sampling') || scens[0];
   if (firstT) selT(firstT.id);
@@ -380,8 +769,10 @@ function manualPass() {
 // ==================================================================
 function setProfsP() {
   P.profs = [
-    {id:'informed',label:'Informed'},{id:'round',label:'Round'},
-    {id:'exact',label:'Exact',time_limit_ms:20000},{id:'blind',label:'Blind'},
+    {id:'informed',label:'Informed'},
+    {id:'round',label:'Round'},
+    {id:'exact',label:'Exact',time_limit_ms:20000},
+    {id:'blind',label:'Blind'},
   ];
   renderProfsP();
 }
@@ -389,13 +780,39 @@ function addProfP() { P.profs.push({id:'informed',label:'New'}); renderProfsP();
 function rmProfP(i) { P.profs.splice(i,1); renderProfsP(); }
 function upProfP(i,k,v) { P.profs[i][k]=v; renderProfsP(); }
 
+function _paramPreview(prof) {
+  const info = MODEL_INFO[prof.id];
+  if (!info) return '';
+  const parts = [];
+  for (const p of info.params) {
+    const val = prof[p.key];
+    if (val !== undefined && val !== p.dflt) {
+      parts.push(`${p.label}=${val}`);
+    }
+  }
+  // Include inner model params for MC/ISMCTS
+  if (prof.id === 'mc' || prof.id === 'ismcts') {
+    const innerId = prof.inner || 'informed';
+    const innerInfo = MODEL_INFO[innerId];
+    if (innerInfo) {
+      for (const p of innerInfo.params) {
+        const val = prof['inner.'+p.key];
+        if (val !== undefined && val !== p.dflt) {
+          parts.push(`内.${p.label}=${val}`);
+        }
+      }
+    }
+  }
+  return parts.length ? parts.slice(0,5).join(', ') + (parts.length>5?'…':'') : '';
+}
+
 function renderProfsP() {
   const ids = ['informed','round','exact','blind'];
-  const opts = ids.map(id=>`<option value="${id}">${(allM[id]||{}).name||id}</option>`).join('');
+  const opts = ids.map(id=>`<option value="${id}">${(MODEL_INFO[id]||{}).name||id}</option>`).join('');
   document.getElementById('profs-p').innerHTML = P.profs.map((p,i)=>{
     const sel = opts.replace(`value="${p.id}"`,`value="${p.id}" selected`);
-    const xtra = p.id==='exact'?`<span style="color:#888;font-size:0.7em;margin-left:3px">${p.time_limit_ms||20000}ms</span>`:'';
-    return `<div class="prow"><div class="pn"><input type="text" value="${p.label||''}" onchange="upProfP(${i},'label',this.value)" placeholder="名称"><select onchange="upProfP(${i},'id',this.value)">${sel}</select><button onclick="rmProfP(${i})">×</button>${xtra}</div></div>`;
+    const preview = _paramPreview(p);
+    return `<div class="prow"><div class="pn"><input type="text" value="${p.label||''}" onchange="upProfP(${i},'label',this.value)" placeholder="名称"><select onchange="upProfP(${i},'id',this.value);renderProfsP()">${sel}</select><button class="btn btn-gy btn-sm" style="padding:0 5px;font-size:0.7em" onclick="openModelPanel('P',${i},'${p.id}')" title="算法介绍与参数">ⓘ</button><button onclick="rmProfP(${i})">×</button></div>${preview?`<div class="param-preview">${preview}</div>`:''}</div>`;
   }).join('')+`<button class="btn btn-gy btn-sm" style="margin-top:2px" onclick="addProfP()">+ 模型</button>`;
 }
 
@@ -458,7 +875,8 @@ async function runP() {
   P.running=true; P.res=[]; P.abort=new AbortController();
   document.getElementById('pres').innerHTML=''; const btn=document.getElementById('btn-ap');
   btn.textContent='停止'; btn.className='btn btn-red btn-sm';
-  const models = P.profs.map(p=>({id:p.id,label:p.label,time_limit_ms:p.time_limit_ms||0}));
+  // Pass all profile params through to API
+  const models = P.profs.map(p=>{const m={id:p.id,label:p.label};for(const k of Object.keys(p)){if(k!=='id'&&k!=='label')m[k]=p[k];}return m;});
   document.getElementById('prcnt').textContent=`(0/${models.length})`;
   const proms = models.map(async m=>{
     try {
@@ -472,9 +890,50 @@ async function runP() {
 }
 function stopP() { if(P.abort){P.abort.abort();P.abort=null;} finishP(); }
 function finishP() { P.running=false; const btn=document.getElementById('btn-ap'); btn.textContent='分析'; btn.className='btn btn-gn btn-sm'; }
+function _renderDetail(detail, modelId) {
+  if (!detail) return '';
+  let h = '';
+  // Score breakdown (Informed/Round/Blind)
+  if (detail.round_score !== undefined || detail.total_score !== undefined) {
+    h += '<div style="font-size:0.95em;color:#ddd;margin-top:4px;margin-bottom:2px;border-top:1px solid rgba(255,255,255,0.08);padding-top:4px;line-height:1.5">';
+    if (detail.rounds_before !== undefined) h += `轮次:${detail.rounds_before}→${detail.rounds_after}  `;
+    if (detail.round_score !== undefined) h += `轮次分:<b style="color:#f1c40f">${detail.round_score}</b>  `;
+    if (detail.gap_score !== undefined) h += `差距分:<b style="color:#f1c40f">${detail.gap_score}</b>  `;
+    if (detail.counter_label) h += `控权:<b style="color:${detail.counter_score>0?'#27ae60':'#e74c3c'}">${detail.counter_label}(${detail.counter_score})</b>  `;
+    if (detail.bomb_label) h += `炸弹:<b style="color:#e67e22">${detail.bomb_label}(${detail.bomb_penalty})</b>  `;
+    if (detail.total_score !== undefined) h += `→ 总分:<b style="color:#27ae60;font-size:1.05em">${detail.total_score}</b>`;
+    h += '</div>';
+  }
+  // Team/opp round info (RoundScorer specific)
+  if (detail.team_before !== undefined) {
+    h += `<div style="font-size:0.92em;color:#bbb;line-height:1.5">队轮:<b style="color:#f1c40f">${detail.team_before}→${detail.team_after}</b>  敌轮:${detail.opp_before}→${detail.opp_after}  差距:<b style="color:${detail.gap_after>0?'#e74c3c':'#27ae60'}">${detail.gap_before}→${detail.gap_after}</b></div>`;
+  }
+  // Exact solver stats
+  if (detail.nodes_searched !== undefined) {
+    h += `<div style="font-size:0.95em;color:#ddd;margin-top:4px;border-top:1px solid rgba(255,255,255,0.08);padding-top:4px;line-height:1.5">搜索:<b style="color:#f1c40f">${detail.nodes_searched}</b>节点  深度:<b style="color:#f1c40f">${detail.max_depth_reached}</b>  终局:<b style="color:#f1c40f">${detail.terminal_evals}</b>${detail.timed_out?'  ⚠超时':''}  精确值:<b style="color:#27ae60;font-size:1.05em">${detail.exact_value!==undefined?detail.exact_value:'?'}</b></div>`;
+  }
+  // MC sample stats
+  if (detail.samples !== undefined && detail.wins !== undefined) {
+    const wr = detail.samples>0?Math.round(detail.wins/detail.samples*100):0;
+    h += `<div style="font-size:0.95em;color:#ddd;line-height:1.5">采样:<b style="color:#27ae60">${detail.wins}/${detail.samples}</b> (胜率<b style="color:#f1c40f">${wr}%</b>)  引擎:${detail.sim_agent||'?'}</div>`;
+  }
+  // ISMCTS visit stats
+  if (detail.visits !== undefined) {
+    const wr = detail.visits>0?Math.round(detail.wins/detail.visits*100):0;
+    h += `<div style="font-size:0.95em;color:#ddd;line-height:1.5">访问:<b style="color:#27ae60">${detail.wins}/${detail.visits}</b> (胜率<b style="color:#f1c40f">${wr}%</b>)  UCB C=${detail.ucb_c}</div>`;
+  }
+  return h;
+}
+
 function renderResP() {
   if (P._suppressRender) return;
   const el=document.getElementById('pres'); if(!P.res.length){el.innerHTML='<span class="emp">无结果</span>';return;}
+  // Remember which model detail sections are open
+  const openModels = new Set();
+  el.querySelectorAll('.mres .mcand[open]').forEach(d => {
+    const mn = d.closest('.mres')?.querySelector('.mn')?.textContent;
+    if (mn) openModels.add(mn);
+  });
   el.innerHTML = P.res.map(r=>{
     if(r.error) return `<div class="mres"><div class="mn">${r.model_name||r.model_id}</div><div class="me">${r.error}</div></div>`;
     const m=r.metrics||{},ch=r.choice;
@@ -483,9 +942,12 @@ function renderResP() {
     let chH = isPass?'<span style="color:#e67e22;font-weight:bold">过牌</span>':(ch?`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 4px;border-radius:3px;font-size:0.7em">${ch.combo_type||'?'}</span> ${(ch.cards||[]).join(' ')}`:'?');
     let stepBtn = `<button class="btn btn-gn btn-sm" onclick="stepP(${JSON.stringify(chCards)},${isPass})" style="margin-left:6px">执行</button>`;
     const cds=r.candidates||[];
-    return `<div class="mres"><div class="mh"><span class="mn">${r.model_name||r.model_id}</span><span class="mt">${m.elapsed_ms!=null?m.elapsed_ms.toFixed(0)+'ms':''}</span></div><div class="mc">${chH} ${ch&&ch.score!=null?`<span class="mw">${ch.score.toFixed(1)}</span>`:''} ${ch&&ch.win_rate!=null?`<span class="mw">${(ch.win_rate*100).toFixed(1)}%</span>`:''} ${stepBtn}</div>
-    ${cds.length?`<details class="mcand"><summary>候选 (${cds.length})</summary>`+cds.map((c,i)=>{const best=i===0;const cad=c.card_ids||[];const isCp=c.combo_type==='PASS';
-      return `<div class="crow${best?' best':''}">${isCp?'<span style="color:#e67e22;font-weight:bold">过牌</span>':`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 2px;border-radius:2px;font-size:0.62em">${c.combo_type||'?'}</span> ${(c.cards||[]).join(' ')}`}<span style="color:#aaa;font-size:0.78em;margin-left:auto">${c.score!=null?c.score.toFixed(1):''}${c.win_rate!=null?' | '+(c.win_rate*100).toFixed(1)+'%':''}</span><button class="btn btn-gn btn-sm" onclick="stepP(${JSON.stringify(cad)},${isCp})" style="margin-left:4px;font-size:0.65em;padding:1px 5px">执行</button></div>`}).join('')+'</details>':''}</div>`;
+    const mn = r.model_name||r.model_id;
+    const openAttr = openModels.has(mn) ? ' open' : '';
+    let cdHtml = cds.length?`<details class="mcand"${openAttr}><summary>候选 (${cds.length})</summary>`+cds.map((c,i)=>{const best=i===0;const cad=c.card_ids||[];const isCp=c.combo_type==='PASS';
+      const detHtml = _renderDetail(c.detail, r.model_id);
+      return `<div class="crow${best?' best':''}"><div class="cr-main">${isCp?'<span style="color:#e67e22;font-weight:bold">过牌</span>':`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 2px;border-radius:2px;font-size:0.62em">${c.combo_type||'?'}</span> ${(c.cards||[]).join(' ')}`}<span style="color:#aaa;font-size:0.78em;margin-left:auto">${c.score!=null?c.score.toFixed(1):''}${c.win_rate!=null?' | '+(c.win_rate*100).toFixed(1)+'%':''}</span><button class="btn btn-gn btn-sm" onclick="stepP(${JSON.stringify(cad)},${isCp})" style="margin-left:4px;font-size:0.65em;padding:1px 5px">执行</button></div>${detHtml?`<div class="cr-detail">${detHtml}</div>`:''}</div>`}).join('')+'</details>':'';
+    return `<div class="mres"><div class="mh"><span class="mn">${mn}</span><span class="mt">${m.elapsed_ms!=null?m.elapsed_ms.toFixed(0)+'ms':''}${m.timed_out?' ⚠':''}</span></div><div class="mc">${chH} ${ch&&ch.score!=null?`<span class="mw">${ch.score.toFixed(1)}</span>`:''} ${ch&&ch.win_rate!=null?`<span class="mw">${(ch.win_rate*100).toFixed(1)}%</span>`:''} ${stepBtn}</div>${cdHtml}</div>`;
   }).join('');
 }
 
@@ -504,17 +966,22 @@ function rmProfT(i) { T.profs.splice(i,1); renderProfsT(); }
 function upProfT(i,k,v) { T.profs[i][k]=v; renderProfsT(); }
 
 function renderProfsT() {
-  const dOpts = Object.entries(allM).filter(([id])=>id==='mc'||id==='ismcts'||id==='blind').map(([id,m])=>`<option value="${id}">${m.name||id}</option>`).join('');
-  const iOpts = Object.entries(schema.inner_model||{}).map(([id,m])=>`<option value="${id}">${m.name}</option>`).join('');
-  const eOpts = Object.entries(schema.enumerator||{}).map(([id,m])=>`<option value="${id}">${m.name}</option>`).join('');
+  const dOpts = ['mc','ismcts','blind'].map(id=>`<option value="${id}">${(MODEL_INFO[id]||{}).name||id}</option>`).join('');
   document.getElementById('profs-t').innerHTML = T.profs.map((p,i)=>{
-    const isMC = p.id==='mc'||p.id==='ismcts';
     const sel = dOpts.replace(`value="${p.id}"`,`value="${p.id}" selected`);
-    return `<div class="prow"><div class="pn"><input type="text" value="${p.label||''}" onchange="upProfT(${i},'label',this.value)" placeholder="名称"><select onchange="upProfT(${i},'id',this.value)">${sel}</select><button onclick="rmProfT(${i})">×</button></div>${isMC?`<div class="pp"><span>内:</span><select onchange="upProfT(${i},'inner',this.value)">${iOpts.replace(`value="${p.inner||'informed'}"`,`value="${p.inner||'informed'}" selected`)}</select><span>枚:</span><select onchange="upProfT(${i},'enumerator',this.value)">${eOpts.replace(`value="${p.enumerator||'full'}"`,`value="${p.enumerator||'full'}" selected`)}</select><span>N:</span><input type="number" value="${p.num_samples||100}" onchange="upProfT(${i},'num_samples',parseInt(this.value))"><span>ms:</span><input type="number" value="${p.time_limit_ms||8000}" onchange="upProfT(${i},'time_limit_ms',parseInt(this.value))"></div>`:''}</div>`;
+    const isMC = p.id==='mc'||p.id==='ismcts';
+    const preview = _paramPreview(p);
+    let xtra = '';
+    if (isMC) {
+      const innerName = (MODEL_INFO[p.inner||'informed']||{}).name||p.inner||'Informed';
+      const enumName = {full:'全面枚举',top_n:'预筛TopN',memory:'记忆感知'}[p.enumerator]||p.enumerator||'full';
+      xtra = `<span style="font-size:0.68em;color:#666;margin-left:2px">N=${p.num_samples||128}ms=${p.time_limit_ms||10000}内=${innerName}枚=${enumName}</span>`;
+    }
+    return `<div class="prow"><div class="pn"><input type="text" value="${p.label||''}" onchange="upProfT(${i},'label',this.value)" placeholder="名称"><select onchange="upProfT(${i},'id',this.value);renderProfsT()">${sel}</select><button class="btn btn-gy btn-sm" style="padding:0 5px;font-size:0.7em" onclick="openModelPanel('T',${i},'${p.id}')" title="算法介绍与参数">ⓘ</button><button onclick="rmProfT(${i})">×</button>${xtra}</div>${preview?`<div class="param-preview">${preview}</div>`:''}</div>`;
   }).join('')+`<button class="btn btn-gy btn-sm" style="margin-top:2px" onclick="addProfT()">+ 模型</button>`;
 }
 function collectProfsT() {
-  return T.profs.map(p=>{const e={id:p.id,label:p.label};if(p.id==='mc'||p.id==='ismcts'){e.num_samples=p.num_samples||100;e.time_limit_ms=p.time_limit_ms||8000;e.inner=p.inner||'informed';e.enumerator=p.enumerator||'full';e.sampler=p.sampler||'random';if(p.id==='ismcts'){e.max_iterations=p.max_iterations||500;e.ucb_c=p.ucb_c||1.4;}}return e;});
+  return T.profs.map(p=>{const e={};for(const k of Object.keys(p)){if(k!=='label')e[k]=p[k];}e.label=p.label;return e;});
 }
 
 // ==================================================================
@@ -575,12 +1042,21 @@ function finishT() { T.running=false; const btn=document.getElementById('btn-at'
 
 function renderResT() {
   const el=document.getElementById('tres'); if(!T.res.length){el.innerHTML='<span class="emp">无结果</span>';return;}
+  // Remember which model detail sections are open
+  const openModels = new Set();
+  el.querySelectorAll('.mres .mcand[open]').forEach(d => {
+    const mn = d.closest('.mres')?.querySelector('.mn')?.textContent;
+    if (mn) openModels.add(mn);
+  });
   el.innerHTML = T.res.map(r=>{
     if(r.error) return `<div class="mres"><div class="mn">${r.model_name||r.model_id}</div><div class="me">${r.error}</div></div>`;
     const m=r.metrics||{},ch=r.choice; const wr=ch&&ch.win_rate!=null?(ch.win_rate*100).toFixed(1)+'%':'';
     let chH = r.pass_chosen?'<span style="color:#e67e22;font-weight:bold">过牌</span>':(ch?`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 4px;border-radius:3px;font-size:0.7em">${ch.combo_type||'?'}</span> ${(ch.cards||[]).join(' ')}`:'?');
     const cds=r.candidates||[];
-    return `<div class="mres"><div class="mh"><span class="mn">${r.model_name||r.model_id}</span><span class="mt">${m.elapsed_ms!=null?m.elapsed_ms.toFixed(0)+'ms':''}${m.timed_out?' ⚠':''}</span></div><div class="mc">${chH} ${wr?`<span class="mw">${wr}</span>`:''}</div>${cds.length?`<details class="mcand"><summary>候选 (${cds.length})</summary>`+cds.map((c,i)=>{const best=i===0;const cwr=c.win_rate!=null?Math.round(c.win_rate*100):0;return `<div class="crow${best?' best':''}">${c.combo_type==='PASS'?'<span style="color:#e67e22;font-weight:bold">过牌</span>':`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 2px;border-radius:2px;font-size:0.62em">${c.combo_type||'?'}</span> ${(c.cards||[]).join(' ')}`}<span class="cwr">${cwr?`<span class="wbar" style="width:${Math.max(cwr,1)}px"></span><span class="wtxt">${cwr}%</span>`:''}</span></div>`}).join('')+'</details>':''}</div>`;
+    const mn = r.model_name||r.model_id;
+    const openAttr = openModels.has(mn) ? ' open' : '';
+    let cdHtml = cds.length?`<details class="mcand"${openAttr}><summary>候选 (${cds.length})</summary>`+cds.map((c,i)=>{const best=i===0;const cwr=c.win_rate!=null?Math.round(c.win_rate*100):0;const detHtml=_renderDetail(c.detail,r.model_id);return `<div class="crow${best?' best':''}"><div class="cr-main">${c.combo_type==='PASS'?'<span style="color:#e67e22;font-weight:bold">过牌</span>':`<span class="combo-tag" style="background:#daa520;color:#222;padding:1px 2px;border-radius:2px;font-size:0.62em">${c.combo_type||'?'}</span> ${(c.cards||[]).join(' ')}`}<span class="cwr">${cwr?`<span class="wbar" style="width:${Math.max(cwr,1)}px"></span><span class="wtxt">${cwr}%</span>`:''}</span></div>${detHtml?`<div class="cr-detail">${detHtml}</div>`:''}</div>`}).join('')+'</details>':'';
+    return `<div class="mres"><div class="mh"><span class="mn">${mn}</span><span class="mt">${m.elapsed_ms!=null?m.elapsed_ms.toFixed(0)+'ms':''}${m.timed_out?' ⚠':''}</span></div><div class="mc">${chH} ${wr?`<span class="mw">${wr}</span>`:''}</div>${cdHtml}</div>`;
   }).join('');
 }
 

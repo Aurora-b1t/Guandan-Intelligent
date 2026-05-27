@@ -24,6 +24,7 @@ class CandidateResult:
     score: Optional[float] = None      # heuristic score
     win_rate: Optional[float] = None   # MC win rate
     reasoning: str = ""                # short explanation
+    detail: Optional[dict] = None      # structured computation trace
 
 
 @dataclass

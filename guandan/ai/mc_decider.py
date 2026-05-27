@@ -81,7 +81,7 @@ class MCDecider:
         if can_pass:
             all_candidates.append(None)  # pass
 
-        results = []
+        results = []  # list of (combo, wr, sims, wins)
         timed_out = False
 
         for candidate in all_candidates:
@@ -90,7 +90,7 @@ class MCDecider:
                 break
 
             if candidate is None:
-                results.append((None, 0.0))
+                results.append((None, 0.0, 0, 0))
                 continue
 
             wins = 0
@@ -104,7 +104,7 @@ class MCDecider:
                 sims += 1
 
             wr = wins / sims if sims > 0 else 0.0
-            results.append((candidate, wr))
+            results.append((candidate, wr, sims, wins))
 
         best = max(results, key=lambda r: r[1]) if results else (None, 0.0)
         best_wr = best[1]
@@ -113,17 +113,19 @@ class MCDecider:
         # Build AnalyzeResult
         from .models.interface import AnalyzeResult, CandidateResult
         crs = []
-        for c, wr in results:
+        sim_agent_name = getattr(self.inner, 'name', 'Blind') if self.inner else 'Blind'
+        for c, wr, sims, wins in results:
+            detail = {"samples": sims, "wins": wins, "sim_agent": sim_agent_name}
             if c is None:
                 crs.append(CandidateResult(
                     combo_type="PASS", cards=[], card_ids=[],
-                    win_rate=wr, score=wr))
+                    win_rate=wr, score=wr, detail=detail))
             else:
                 crs.append(CandidateResult(
                     combo_type=c.combo_type.name,
                     cards=[x.display for x in c.cards],
                     card_ids=[x.id for x in c.cards],
-                    win_rate=wr, score=wr))
+                    win_rate=wr, score=wr, detail=detail))
 
         crs.sort(key=lambda r: r.win_rate or 0, reverse=True)
         best_cr = crs[0] if crs else None

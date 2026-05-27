@@ -167,18 +167,11 @@ DEDUCTION_SCENARIOS = [
         expected_play_ranks=[8, 3], expected_play_counts=[3, 2],
         reasoning="三带二(三张8+对3)压桌面的三带二(三张4+对5)"
     ),
-]
-
-# ==================================================================
-# Category 2: Endgame exact solve (残局)
-# Very small hands, ideal for exact solver.
-# ==================================================================
-
-ENDGAME_SCENARIOS = [
+    # --- Merged from endgame ---
     _make_scenario(
         id="endgame_pair_vs_pair",
         name="残局：对子抉择",
-        category="endgame",
+        category="deduction",
         description="桌面对4(右家出)。手牌对8对3。应出对8压对4。",
         hand_ranks=[8, 3], hand_counts=[2, 2],
         opp1=([13, 12], [1, 1]),
@@ -191,7 +184,7 @@ ENDGAME_SCENARIOS = [
     _make_scenario(
         id="endgame_bomb_take_control",
         name="残局：炸弹抢控制",
-        category="endgame",
+        category="deduction",
         description="桌面单K(右家出)。手牌4张8炸弹+单A。应出炸弹压K，单A收尾。",
         hand_ranks=[8, 14], hand_counts=[4, 1],
         opp1=([13, 5], [1, 1]),
@@ -204,7 +197,7 @@ ENDGAME_SCENARIOS = [
     _make_scenario(
         id="endgame_exact_4cards",
         name="残局：4张牌首选",
-        category="endgame",
+        category="deduction",
         description="首家。手牌对A对3。应出对3，对A保留做大牌。",
         hand_ranks=[14, 3], hand_counts=[2, 2],
         opp1=([12, 4], [2, 2]),
@@ -217,7 +210,7 @@ ENDGAME_SCENARIOS = [
     _make_scenario(
         id="endgame_minimal_3cards",
         name="残局：最小3张牌",
-        category="endgame",
+        category="deduction",
         description="桌面单J(右家出)。手牌A+K+3。只剩3张，应出A赢K。",
         hand_ranks=[14, 13, 3], hand_counts=[1, 1, 1],
         opp1=([5, 4], [1, 1]),
@@ -230,7 +223,7 @@ ENDGAME_SCENARIOS = [
     _make_scenario(
         id="endgame_consecutive_lead",
         name="残局：连对开局",
-        category="endgame",
+        category="deduction",
         description="首家。手牌连对(3-4-5)+单A。应出连对，不应出单A。",
         hand_ranks=[14, 3, 4, 5], hand_counts=[1, 2, 2, 2],
         opp1=([13, 12, 11, 10, 9, 8, 7, 6], [1, 1, 1, 1, 1, 1, 1, 1]),
@@ -241,6 +234,12 @@ ENDGAME_SCENARIOS = [
         reasoning="出连对(334455)一次出6张，留单A收尾"
     ),
 ]
+
+# ==================================================================
+# Category 2: Endgame exact solve (残局) — reserved for future
+# ==================================================================
+
+ENDGAME_SCENARIOS = []
 
 # ==================================================================
 # Category 3: Probabilistic sampling (不确定采样)

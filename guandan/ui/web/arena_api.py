@@ -316,21 +316,23 @@ def _make_arena_agent(profile: dict):
     model_id = profile.get("id", "blind")
     label = profile.get("label", model_id)
 
-    # Non-MC deciders — use TestableModel directly
+    # Non-MC deciders — use TestableModel directly, pass all profile params
     if model_id not in ("mc", "ismcts"):
+        # Extract model constructor params (filter out metadata keys)
+        model_params = {k: v for k, v in profile.items()
+                       if k not in ("id", "label")}
         if model_id == "informed":
             from ...ai.models import InformedScorer
-            return InformedScorer(), label
+            return InformedScorer(**model_params), label
         elif model_id == "round":
             from ...ai.models import RoundScorer
-            return RoundScorer(), label
+            return RoundScorer(**model_params), label
         elif model_id == "exact":
             from ...ai.models import EndgameExactSolver
-            tl = profile.get("time_limit_ms", 20000)
-            return EndgameExactSolver(time_limit_ms=tl), label
+            return EndgameExactSolver(**model_params), label
         else:  # blind
             from ...ai.models import BlindScorer
-            return BlindScorer(), label
+            return BlindScorer(**model_params), label
 
     # MC deciders — build config from profile and use registry factory
     decider_params = {}
@@ -339,6 +341,17 @@ def _make_arena_agent(profile: dict):
         if key in profile:
             decider_params[key] = profile[key]
 
+    # Extract nested inner/enumerator params from dotted keys like "inner.round_weight"
+    inner_id = decider_params.get("inner", "informed")
+    enum_id = decider_params.get("enumerator", "full")
+    inner_params = {}
+    enum_params = {}
+    for k, v in profile.items():
+        if k.startswith("inner."):
+            inner_params[k[6:]] = v
+        elif k.startswith("enumerator."):
+            enum_params[k[11:]] = v
+
     config = {
         "players": {0: {"decider": model_id, "params": decider_params}},
         "decider": {
@@ -346,9 +359,17 @@ def _make_arena_agent(profile: dict):
             "model_params": {model_id: decider_params},
         },
         "inner_model": {
-            "model_params": {"blind": {}, "informed": {}, "round": {}, "exact": {}},
+            "model_params": {
+                "blind": {}, "informed": {}, "round": {}, "exact": {},
+                inner_id: inner_params,
+            },
         },
-        "enumerator": {"model_params": {"full": {}, "top_n": {}, "memory": {}}},
+        "enumerator": {
+            "model_params": {
+                "full": {}, "top_n": {}, "memory": {},
+                enum_id: enum_params,
+            },
+        },
     }
 
     try:
@@ -360,7 +381,7 @@ def _make_arena_agent(profile: dict):
 
 def _serialize_candidate(c: "CandidateResult", level: int) -> dict:
     """Serialize a CandidateResult to JSON-safe dict."""
-    return {
+    d = {
         "combo_type": c.combo_type,
         "cards": c.cards,
         "card_ids": c.card_ids,
@@ -368,6 +389,9 @@ def _serialize_candidate(c: "CandidateResult", level: int) -> dict:
         "win_rate": c.win_rate,
         "reasoning": c.reasoning,
     }
+    if c.detail:
+        d["detail"] = c.detail
+    return d
 
 
 def _serialize_analyze_result(result: "AnalyzeResult", level: int, model_id: str, model_name: str, elapsed_ms: float) -> dict:

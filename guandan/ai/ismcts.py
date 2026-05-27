@@ -134,17 +134,20 @@ class ISMCTSDecider:
 
         for combo, child in root.children:
             wr = child.wins / child.visits if child.visits > 0 else 0.0
+            detail = {"visits": child.visits, "wins": child.wins, "ucb_c": self.ucb_c}
             if combo is None:
                 crs.append(CandidateResult(combo_type="PASS", cards=[], card_ids=[],
                                            win_rate=wr, score=wr,
-                                           reasoning=f"IS-MCTS: {child.wins}/{child.visits}"))
+                                           reasoning=f"IS-MCTS: {child.wins}/{child.visits}",
+                                           detail=detail))
             else:
                 crs.append(CandidateResult(
                     combo_type=combo.combo_type.name,
                     cards=[x.display for x in combo.cards],
                     card_ids=[x.id for x in combo.cards],
                     win_rate=wr, score=wr,
-                    reasoning=f"IS-MCTS: {child.wins}/{child.visits} visits"))
+                    reasoning=f"IS-MCTS: {child.wins}/{child.visits} visits",
+                    detail=detail))
             if child.visits > best_visits:
                 best_visits = child.visits
                 best_combo = combo

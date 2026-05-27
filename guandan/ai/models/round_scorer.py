@@ -75,22 +75,43 @@ class RoundScorer(TestableModel):
             gap_before = opp_before - team_before
             gap_after = opp_after - team_after
 
-            score = team_delta * self.c["round_delta_weight"] + (gap_after - gap_before) * self.c["gap_improve_weight"]
+            round_score = team_delta * self.c["round_delta_weight"]
+            gap_score = (gap_after - gap_before) * self.c["gap_improve_weight"]
 
             who = self._first_who_can_beat(state, pid, c)
+            counter_score = 0.0
+            counter_label = ""
             if who is None:
-                score += self.c["no_counter_bonus"]
+                counter_score = self.c["no_counter_bonus"]
+                counter_label = "无人能压"
             elif teams[who] == my_team:
-                score += self.c["teammate_cover_bonus"]
+                counter_score = self.c["teammate_cover_bonus"]
+                counter_label = f"队友P{who}可接"
             else:
-                score -= self.c["opponent_counter_penalty"]
+                counter_score = -self.c["opponent_counter_penalty"]
+                counter_label = f"对手P{who}能压"
+
+            total = round_score + gap_score + counter_score
 
             results.append(CandidateResult(
                 combo_type=c.combo_type.name,
                 cards=[x.display for x in c.cards],
                 card_ids=[x.id for x in c.cards],
-                score=score,
+                score=total,
                 reasoning=f"队轮{team_before}→{team_after} 对手{opp_before}→{opp_after}",
+                detail={
+                    "team_before": team_before, "team_after": team_after,
+                    "team_delta": team_delta,
+                    "opp_before": opp_before, "opp_after": opp_after,
+                    "gap_before": gap_before, "gap_after": gap_after,
+                    "round_delta_weight": self.c["round_delta_weight"],
+                    "round_score": round(round_score, 1),
+                    "gap_improve_weight": self.c["gap_improve_weight"],
+                    "gap_score": round(gap_score, 1),
+                    "counter_who": who, "counter_label": counter_label,
+                    "counter_score": round(counter_score, 1),
+                    "total_score": round(total, 1),
+                },
             ))
 
         results.sort(key=lambda r: r.score or 0, reverse=True)

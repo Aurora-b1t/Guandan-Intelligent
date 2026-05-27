@@ -60,7 +60,7 @@ class InformedScorer(TestableModel):
         for c in candidates:
             used_ids = {x.id for x in c.cards}
             hand_after = tuple(x for x in hand if x.id not in used_ids)
-            s = self._score(c, hand, hand_after, state, pid, my_team)
+            s, detail = self._score(c, hand, hand_after, state, pid, my_team)
 
             results.append(CandidateResult(
                 combo_type=c.combo_type.name,
@@ -68,6 +68,7 @@ class InformedScorer(TestableModel):
                 card_ids=[x.id for x in c.cards],
                 score=s,
                 reasoning=self._explain(c, state, pid, my_team),
+                detail=detail,
             ))
 
         results.sort(key=lambda r: r.score or 0, reverse=True)
@@ -92,23 +93,42 @@ class InformedScorer(TestableModel):
         round_delta = rounds_before - rounds_after
 
         who = self._first_who_can_beat(state, pid, combo)
-        score = round_delta * self.c["round_weight"]
+        round_score = round_delta * self.c["round_weight"]
+        counter_score = 0.0
+        counter_label = ""
         if who is None:
-            score += self.c["no_counter_bonus"]
+            counter_score = self.c["no_counter_bonus"]
+            counter_label = "无人能压"
         elif {0:0,1:1,2:0,3:1}[who] == my_team:
-            score += self.c["teammate_cover_bonus"]
+            counter_score = self.c["teammate_cover_bonus"]
+            counter_label = f"队友P{who}可接"
         else:
-            score -= self.c["opponent_counter_penalty"]
+            counter_score = -self.c["opponent_counter_penalty"]
+            counter_label = f"对手P{who}能压"
 
+        bomb_penalty = 0.0
+        bomb_label = ""
         if combo.is_bomb:
             if state.table.current_combo is None:
-                score -= self.c["bomb_lead_penalty"]
+                bomb_penalty = -self.c["bomb_lead_penalty"]
+                bomb_label = "首家出炸弹"
             elif not state.table.current_combo.is_bomb:
                 finder = ComboFinder(hand_before, state.level)
                 resp = finder.pick_response(state.table.current_combo)
                 if resp and not resp.is_bomb:
-                    score -= self.c["bomb_overuse_penalty"]
-        return score
+                    bomb_penalty = -self.c["bomb_overuse_penalty"]
+                    bomb_label = "有更优方案却出炸弹"
+
+        total = round_score + counter_score + bomb_penalty
+        return total, {
+            "rounds_before": rounds_before, "rounds_after": rounds_after,
+            "round_delta": round_delta, "round_weight": self.c["round_weight"],
+            "round_score": round(round_score, 1),
+            "counter_who": who, "counter_label": counter_label,
+            "counter_score": round(counter_score, 1),
+            "bomb_penalty": round(bomb_penalty, 1), "bomb_label": bomb_label,
+            "total_score": round(total, 1),
+        }
 
     def _score_pass(self, state, pid, my_team):
         table_combo = state.table.current_combo
