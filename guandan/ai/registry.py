@@ -35,7 +35,7 @@ _builder.param(_mc, "time_limit_ms", "int", 10000, label="时限(ms)")
 _builder.param(_mc, "sampler", "select", "random", label="采样器",
                options={"random": "RandomSampler", "constrained": "ConstrainedSampler"})
 _builder.param(_mc, "inner", "ref", "informed", label="内层模型", ref_category="inner_model")
-_builder.param(_mc, "enumerator", "ref", "full", label="候选枚举", ref_category="enumerator")
+_builder.param(_mc, "enumerator", "ref", "top_n", label="候选枚举", ref_category="enumerator")
 
 # IS-MCTS
 _ism = _builder.model("decider", "ismcts", "IS-MCTS 树搜索",
@@ -164,7 +164,7 @@ def create_agent_for_player(config: dict, player_id: int):
     if decider_id in ("mc", "ismcts"):
         sampler_id = params.get("sampler", "random")
         inner_id = params.get("inner", "informed")
-        enumerator_id = params.get("enumerator", "full")
+        enumerator_id = params.get("enumerator", "top_n")
 
         inner_params = config.get("inner_model", {}).get("model_params", {}).get(inner_id, {})
         inner = _make_inner_agent(inner_id, inner_params)

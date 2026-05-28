@@ -8,6 +8,7 @@ move and auto-plays AI turns until it's the human's turn again.
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, List, Optional, Tuple
 
 from ..card import Card
@@ -18,6 +19,8 @@ from ..deck import Deck
 from ..game_state import GameState
 from ..rules import RulesEngine, PlayLegality
 from ..score import calculate_result, advance_level, is_game_won
+from ..logging import game_logger
+from ..state_utils import apply_play, start_new_trick, next_active_player
 from ..table import TableState
 
 
@@ -29,8 +32,9 @@ class InteractiveGame:
 
     HUMAN_ID = 0
 
-    def __init__(self, level: int = 2):
+    def __init__(self, level: int = 2, agent_timeout_ms: float = 30000):
         self.level = level
+        self.agent_timeout_ms = agent_timeout_ms
         self.team_levels = [level, level]
         self.round_number = 0
         self.state: Optional[GameState] = None
@@ -275,7 +279,19 @@ class InteractiveGame:
 
         agent = create_agent_for_player(self.config, player_id)
         view = PlayerView(self.state, player_id, self.action_log)
-        play_cards = agent.choose_play(view)
+
+        if self.agent_timeout_ms > 0:
+            timeout_s = self.agent_timeout_ms / 1000
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(agent.choose_play, view)
+                    play_cards = future.result(timeout=timeout_s)
+            except FutureTimeoutError:
+                game_logger.warning("agent_timeout", player=player_id,
+                                    timeout_ms=self.agent_timeout_ms)
+                play_cards = self._force_play(player_id, hand)
+        else:
+            play_cards = agent.choose_play(view)
 
         result = self.rules.validate_play(
             cards=play_cards,
@@ -299,38 +315,35 @@ class InteractiveGame:
             self.state.current_player = (player_id + 1) % 4
 
     def _apply_play(self, player_id: int, cards: List[Card], combo: Combo):
-        """Apply a play: update table, remove cards, log action."""
-        hand = self.state.hands[player_id]
-        played_ids = {c.id for c in cards}
-        new_hand = tuple(c for c in hand if c.id not in played_ids)
+        """Apply a play: record in action log, then delegate to state_utils."""
         self.action_log.record_play(self.state.trick_number, player_id, cards, combo)
-        self.state.hands = tuple(
-            new_hand if i == player_id else h
-            for i, h in enumerate(self.state.hands)
-        )
-        self.state.played_cards.extend(cards)
-        self.state.table.record_play(player_id, combo)
-        self.state.current_player = (player_id + 1) % 4
-
-        if not new_hand:
-            self.state.finished_positions.append(player_id)
+        apply_play(self.state, player_id, combo)
 
     def _start_new_trick(self):
-        """Start a new trick with the appropriate leader."""
-        # Save current trick history before clearing
+        """Start a new trick: save history, then delegate to state_utils."""
         self._acc_trick_history.extend(self.state.table.trick_history)
-        leader = self._next_active_player(self.state.current_player)
-        self.state.table.reset_for_new_trick(leader)
-        self.state.trick_number += 1
-        self.state.current_player = leader
+        start_new_trick(self.state)
 
     def _next_active_player(self, from_player: int) -> int:
-        """Find the next active player clockwise from from_player."""
-        for _ in range(4):
-            if from_player not in self.state.finished_positions:
-                return from_player
-            from_player = (from_player + 1) % 4
-        return from_player
+        return next_active_player(self.state, from_player)
+
+    def _force_play(self, _player_id: int, hand: tuple) -> list:
+        """Fallback when AI times out: smallest natural single, or pass."""
+        from ..card import Rank
+        from ..combo_parser import ComboParser
+        normal = sorted(
+            [c for c in hand if c.rank < Rank.SMALL_JOKER],
+            key=lambda c: c.rank.value,
+        )
+        if normal:
+            parser = ComboParser(self.state.level)
+            combo = parser.parse([normal[0]])
+            if combo:
+                return [normal[0]]
+        if self.state.table.is_empty:
+            for c in hand:
+                return [c]
+        return []
 
     def _mask_state_for_player(self, player_id: int) -> GameState:
         """Return a copy of the state with opponent hands masked (empty tuples).

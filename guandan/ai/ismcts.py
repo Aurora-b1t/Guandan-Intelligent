@@ -25,8 +25,9 @@ from ..rules import RulesEngine
 from ..score import calculate_result
 from ..table import TableState
 from .player_view import PlayerView
+from ..state_utils import clone_state, apply_play, start_new_trick, next_active_player, did_team_win
 from .sampler import Sampler, create_sampler
-from .logger import ai_log
+from ..logging import ai_log
 
 
 class ISMCTSDecider:
@@ -86,18 +87,18 @@ class ISMCTSDecider:
         can_pass = table_combo is not None and table.last_played_player != pid
 
         # Build root node
-        sim_state = _clone_state(view._state)
+        sim_state = clone_state(view._state)
         root = _Node(sim_state, pid, view, self.ucb_c)
 
         # Expand root with candidates
         for c in candidates:
-            child_state = _clone_state(sim_state)
-            _apply_play(child_state, pid, c)
+            child_state = clone_state(sim_state)
+            apply_play(child_state, pid, c)
             root.add_child(c, child_state)
 
         if can_pass:
             # Pass action
-            pass_state = _clone_state(sim_state)
+            pass_state = clone_state(sim_state)
             pass_state.table.record_pass(pid)
             pass_state.current_player = (pid + 1) % 4
             root.add_child(None, pass_state)  # None = pass
@@ -183,16 +184,16 @@ class ISMCTSDecider:
         # Pick one untried combo (random for exploration diversity)
         combo = node.untried.pop(random.randint(0, len(node.untried) - 1))
 
-        child_state = _clone_state(node.state)
+        child_state = clone_state(node.state)
         if combo is None:
             # Pass
             # Find current player
-            current = _next_active(child_state, node.state.current_player)
+            current = next_active_player(child_state, node.state.current_player)
             child_state.table.record_pass(current)
             child_state.current_player = (current + 1) % 4
         else:
-            current = _next_active(child_state, node.state.current_player)
-            _apply_play(child_state, current, combo)
+            current = next_active_player(child_state, node.state.current_player)
+            apply_play(child_state, current, combo)
 
         child = node.add_child(combo, child_state)
         return child
@@ -201,7 +202,7 @@ class ISMCTSDecider:
         """Rollout from this node to terminal, return True if my team wins."""
         pid = view.player_id
         my_team = {0: 0, 1: 1, 2: 0, 3: 1}[pid]
-        sim_state = _clone_state(node.state)
+        sim_state = clone_state(node.state)
 
         # Deal unseen cards
         sampled = self.sampler.sample(view)
@@ -222,10 +223,10 @@ class ISMCTSDecider:
                 other = [p for p in sim_state.active_players if p != table.last_played_player]
                 if table.pass_count >= len(other):
                     sim_state.current_player = table.last_played_player
-                    _start_new_trick(sim_state)
+                    start_new_trick(sim_state)
                     continue
 
-            current = _next_active(sim_state, sim_state.current_player)
+            current = next_active_player(sim_state, sim_state.current_player)
             hand = sim_state.hands[current]
 
             # Use inner decider
@@ -241,12 +242,12 @@ class ISMCTSDecider:
                 cards=play_cards, hand=hand, table_state=sim_state.table,
                 player_id=current, finished_positions=sim_state.finished_positions)
             if result.is_legal and play_cards:
-                _apply_play(sim_state, current, result.resolved_combo)
+                apply_play(sim_state, current, result.resolved_combo)
             else:
                 sim_state.table.record_pass(current)
                 sim_state.current_player = (current + 1) % 4
 
-        return _did_team_win(sim_state, my_team)
+        return did_team_win(sim_state, my_team)
 
     def _backpropagate(self, node: _Node, won: bool, root_pid: int):
         """Propagate result up the tree."""
@@ -254,7 +255,7 @@ class ISMCTSDecider:
         while node is not None:
             node.visits += 1
             # Win counts from the perspective of the player who acted at this node
-            current = _next_active(node.state, node.state.current_player)
+            current = next_active_player(node.state, node.state.current_player)
             current_team = {0: 0, 1: 1, 2: 0, 3: 1}[current]
             if (won and current_team == my_team) or (not won and current_team != my_team):
                 node.wins += 1
@@ -326,55 +327,3 @@ _COMBO_TYPE_CN = {
 }
 
 
-# ==================================================================
-# Helpers (duplicated from agent.py for independence)
-# ==================================================================
-
-def _clone_state(state: GameState) -> GameState:
-    t = TableState(
-        current_combo=state.table.current_combo,
-        last_played_player=state.table.last_played_player,
-        pass_count=state.table.pass_count,
-        trick_leader=state.table.trick_leader,
-        trick_history=list(state.table.trick_history))
-    return GameState(
-        level=state.level, round_number=state.round_number,
-        hands=state.hands, played_cards=list(state.played_cards),
-        finished_positions=list(state.finished_positions),
-        current_player=state.current_player, table=t, trick_number=state.trick_number)
-
-
-def _apply_play(state: GameState, pid: int, combo: Combo):
-    hand = state.hands[pid]
-    ids = {c.id for c in combo.cards}
-    new = tuple(c for c in hand if c.id not in ids)
-    state.hands = tuple(new if i == pid else h for i, h in enumerate(state.hands))
-    state.played_cards.extend(combo.cards)
-    state.table.record_play(pid, combo)
-    state.current_player = (pid + 1) % 4
-    if not new:
-        state.finished_positions.append(pid)
-
-
-def _start_new_trick(state: GameState):
-    leader = _next_active(state, state.current_player)
-    state.table.reset_for_new_trick(leader)
-    state.trick_number += 1
-    state.current_player = leader
-
-
-def _next_active(state: GameState, start: int) -> int:
-    for _ in range(4):
-        if start not in state.finished_positions:
-            return start
-        start = (start + 1) % 4
-    return start
-
-
-def _did_team_win(state: GameState, my_team: int) -> bool:
-    if len(state.finished_positions) >= 3:
-        result = calculate_result(state.finished_positions)
-        return result.winning_team == my_team
-    if state.finished_positions:
-        return {0: 0, 1: 1, 2: 0, 3: 1}[state.finished_positions[0]] == my_team
-    return False

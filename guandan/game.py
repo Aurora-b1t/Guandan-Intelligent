@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -13,6 +14,8 @@ from .deck import Deck
 from .game_state import GameState
 from .rules import PlayLegality, RulesEngine, ValidationResult
 from .score import RoundResult, advance_level, calculate_result, is_game_won
+from .logging import game_logger
+from .state_utils import next_active_player
 from .table import TableState
 
 
@@ -31,10 +34,11 @@ class Game:
     MAX_TRICKS_PER_ROUND = 500
     MAX_TRICK_ITERATIONS = 200
 
-    def __init__(self, agents: List, level: int = 2):
+    def __init__(self, agents: List, level: int = 2, agent_timeout_ms: float = 30000):
         if len(agents) != 4:
             raise ValueError(f"Need exactly 4 agents, got {len(agents)}")
         self.agents = agents
+        self.agent_timeout_ms = agent_timeout_ms
         self.rules = RulesEngine(level)
         self.state: Optional[GameState] = None
         self.team_levels = [level, level]  # [team_0, team_1]
@@ -46,24 +50,32 @@ class Game:
 
         Win condition: win a round while your team's level is at A (14) or higher.
         """
-        while True:
-            round_result = self._play_round()
-            self.round_results.append(round_result)
+        game_logger.game("game_start", level=self.team_levels[0])
+        try:
+            while True:
+                round_result = self._play_round()
+                self.round_results.append(round_result)
 
-            winning_team = round_result.winning_team
+                winning_team = round_result.winning_team
 
-            # Win: already at level A (or above) and won the round
-            if is_game_won(self.team_levels[winning_team]):
-                return GameResult(
-                    winning_team=winning_team,
-                    final_levels=(self.team_levels[0], self.team_levels[1]),
-                    rounds_played=self.round_number,
-                    round_results=self.round_results,
+                # Win: already at level A (or above) and won the round
+                if is_game_won(self.team_levels[winning_team]):
+                    game_logger.game("game_end", winner=winning_team,
+                                    levels=list(self.team_levels),
+                                    rounds=self.round_number)
+                    return GameResult(
+                        winning_team=winning_team,
+                        final_levels=(self.team_levels[0], self.team_levels[1]),
+                        rounds_played=self.round_number,
+                        round_results=self.round_results,
+                    )
+
+                self.team_levels[winning_team] = advance_level(
+                    self.team_levels[winning_team], round_result.level_change
                 )
-
-            self.team_levels[winning_team] = advance_level(
-                self.team_levels[winning_team], round_result.level_change
-            )
+        except Exception:
+            game_logger.warning("game_error", error=str(Exception))
+            raise
 
     def _play_round(self) -> RoundResult:
         """Play one round (one hand)."""
@@ -89,6 +101,9 @@ class Game:
             trick_number=0,
         )
 
+        game_logger.game("round_start", round=self.round_number,
+                         level=level, starter=starter)
+
         # Play tricks until 3 players empty their hands
         round_iters = 0
         while len(self.state.finished_positions) < 3:
@@ -102,19 +117,26 @@ class Game:
                     player_id=-1, reason=PlayLegality.INVALID_COMBO,
                 )
 
-        return calculate_result(self.state.finished_positions)
+        result = calculate_result(self.state.finished_positions)
+        game_logger.game("round_end", round=self.round_number,
+                         winner=result.winning_team,
+                         level_change=result.level_change,
+                         positions=result.positions)
+        return result
 
     def _play_trick(self):
         """Play one trick (一轮)."""
         self.state.trick_number += 1
-        leader = self._current_active_player(self.state.current_player)
+        leader = next_active_player(self.state, self.state.current_player)
         self.state.table.reset_for_new_trick(leader)
         current = leader
+        game_logger.game_debug("trick_start", trick=self.state.trick_number,
+                               leader=leader)
         _iter = 0
 
         while _iter < self.MAX_TRICK_ITERATIONS:
             _iter += 1
-            current = self._current_active_player(current)
+            current = next_active_player(self.state,current)
 
             # Check if trick should end: all other active players have passed
             if self.state.table.last_played_player >= 0:
@@ -125,12 +147,24 @@ class Game:
                 if self.state.table.pass_count >= other_active:
                     break
 
-            # Get agent's play
+            # Get agent's play (with timeout)
             agent = self.agents[current]
             hand = self.state.hands[current]
             from .ai.player_view import PlayerView
             view = PlayerView(self.state, current)
-            play_cards = agent.choose_play(view)
+
+            if self.agent_timeout_ms > 0:
+                timeout_s = self.agent_timeout_ms / 1000
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(agent.choose_play, view)
+                        play_cards = future.result(timeout=timeout_s)
+                except FutureTimeoutError:
+                    game_logger.warning("agent_timeout", player=current,
+                                        timeout_ms=self.agent_timeout_ms)
+                    play_cards = self._force_play(current, hand)
+            else:
+                play_cards = agent.choose_play(view)
 
             # Validate
             result = self.rules.validate_play(
@@ -161,15 +195,25 @@ class Game:
                 )
                 self.state.played_cards.extend(play_cards)
 
+                game_logger.game_debug(
+                    "play", player=current, combo=combo.combo_type.name,
+                    cards=len(play_cards), hand_remaining=len(new_hand),
+                    trick=self.state.trick_number,
+                )
+
                 # Check finish
                 if not new_hand:
                     self.state.finished_positions.append(current)
+                    game_logger.game("player_finished", player=current,
+                                     position=len(self.state.finished_positions))
                     # If 3 players finished, trick ends
                     if len(self.state.finished_positions) >= 3:
                         break
             else:
                 # Pass
                 self.state.table.record_pass(current)
+                game_logger.game_debug("pass", player=current,
+                                       trick=self.state.trick_number)
 
             # Next player (clockwise, skip finished)
             current = (current + 1) % 4
@@ -187,13 +231,24 @@ class Game:
         if self.state.table.last_played_player >= 0:
             self.state.current_player = self.state.table.last_played_player
 
-    def _current_active_player(self, from_player: int) -> int:
-        """Find the next active player starting from `from_player` (inclusive)."""
-        for _ in range(4):
-            if from_player not in self.state.finished_positions:
-                return from_player
-            from_player = (from_player + 1) % 4
-        return from_player  # fallback
+    def _force_play(self, _player_id: int, hand: tuple) -> list:
+        """Fallback when agent times out: play smallest single, or pass."""
+        from .combo_parser import ComboParser
+        from .card import Rank
+        normal = sorted(
+            [c for c in hand if c.rank < Rank.SMALL_JOKER],
+            key=lambda c: c.rank.value,
+        )
+        if normal:
+            parser = ComboParser(self.state.level)
+            combo = parser.parse([normal[0]])
+            if combo:
+                return [normal[0]]
+        if self.state.table.is_empty:
+            # Leader must play — force any single
+            for c in hand:
+                return [c]
+        return []  # pass
 
 
 class IllegalPlayError(Exception):

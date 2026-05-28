@@ -12,9 +12,10 @@ from ...game_state import GameState
 from ...rules import RulesEngine
 from ...table import TableState
 from ...ai.player_view import PlayerView
+from ...state_utils import next_active_player
 from ...ai.registry import get_schema, create_agent_for_player
-from ...ai.logger import AILogger
-from tests.arena.scenarios import ALL_SCENARIOS, get_scenario_by_id, list_categories
+from ...logging import game_logger
+from ...arena.scenarios import ALL_SCENARIOS, get_scenario_by_id, list_categories
 
 arena_bp = Blueprint('arena_api', __name__)
 
@@ -198,17 +199,10 @@ class Simulator:
         if table.pass_count >= len(other_active):
             # Trick ended — save history and reset
             self._acc_trick_history.extend(table.trick_history)
-            leader = self._next_active(table.last_played_player)
+            leader = next_active_player(self.state, table.last_played_player)
             table.reset_for_new_trick(leader)
             self.state.trick_number += 1
             self.state.current_player = leader
-
-    def _next_active(self, start: int) -> int:
-        for _ in range(4):
-            if start not in self.state.finished_positions:
-                return start
-            start = (start + 1) % 4
-        return start
 
     def get_state(self) -> dict:
         """Serialize complete game state for frontend."""
@@ -287,11 +281,26 @@ class Simulator:
 
 
 # In-memory simulator storage (keyed by session-like ID)
+# {sim_id: (Simulator, last_access_timestamp)}
+_SIM_TTL = 10 * 60  # 10 minutes
 _simulators: dict = {}
 
 
+def _cleanup_sims():
+    now = time.time()
+    expired = [sid for sid, (_, ts) in _simulators.items() if now - ts > _SIM_TTL]
+    for sid in expired:
+        del _simulators[sid]
+
+
 def _get_sim(sim_id: str) -> Simulator | None:
-    return _simulators.get(sim_id)
+    _cleanup_sims()
+    entry = _simulators.get(sim_id)
+    if entry:
+        sim, _ = entry
+        _simulators[sim_id] = (sim, time.time())
+        return sim
+    return None
 
 
 def _card_json_static(card: Card, level: int = 2) -> dict:
@@ -524,7 +533,7 @@ def analyze_scenario():
             schema_names[mid] = m["name"]
 
     # Clear AI log before running
-    AILogger.get().clear()
+    game_logger.clear()
 
     results = []
     for entry in model_profiles:
@@ -548,7 +557,7 @@ def analyze_scenario():
 
         # Attach debug info if requested
         if debug:
-            log_entries = AILogger.get().get_recent(50)
+            log_entries = game_logger.query(count=50)
             r["debug"] = {"ai_log": log_entries}
             # If ISMCTS, serialize root node tree
             if hasattr(agent, 'root') and agent.root is not None:
@@ -666,7 +675,7 @@ def sim_init():
 
     sid = uuid.uuid4().hex
     sim = Simulator(scenario)
-    _simulators[sid] = sim
+    _simulators[sid] = (sim, time.time())
     state = sim.get_state()
     state["sim_id"] = sid
     return jsonify(state)
@@ -735,7 +744,7 @@ def sim_analyze():
         for mid, m in schema.get(cat, {}).get("models", {}).items():
             schema_names[mid] = m["name"]
 
-    AILogger.get().clear()
+    game_logger.clear()
     results = []
 
     for entry in model_profiles:
@@ -757,7 +766,7 @@ def sim_analyze():
 
         r = _serialize_analyze_result(result, level, mid, name, elapsed)
         if data.get("debug"):
-            log_entries = AILogger.get().get_recent(50)
+            log_entries = game_logger.query(count=50)
             r["debug"] = {"ai_log": log_entries}
         results.append(r)
 

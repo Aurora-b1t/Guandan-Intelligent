@@ -550,6 +550,10 @@ function renderAILog(data) {
         _playerTimedOut[e.player] = e.data.timed_out || false;
       }
     }
+    // Re-render trick history so win rates appear immediately
+    if (gameState && gameState.trick_history) {
+      renderTrickHistory(gameState.trick_history);
+    }
   }
 
   if (!data || !data.entries || data.entries.length === 0) {

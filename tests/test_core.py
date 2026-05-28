@@ -532,46 +532,6 @@ def test_edge_bomb_size_limit():
 
 if __name__ == '__main__':
     print("Running Guandan core tests...\n")
-    tests = [
-        test_card_encoding,
-        test_wild_detection,
-        test_parser_singles,
-        test_parser_pairs,
-        test_parser_triples,
-        test_parser_triple_side,
-        test_parser_straight,
-        test_parser_consecutive_pairs,
-        test_parser_consecutive_triples,
-        test_parser_bomb,
-        test_parser_rocket,
-        test_parser_straight_flush,
-        test_parser_invalid,
-        test_compare_same_type,
-        test_compare_bomb_vs_nonbomb,
-        test_compare_bomb_vs_bomb,
-        test_compare_different_nonbomb,
-        test_deck,
-        test_rules_leader,
-        test_rules_card_not_in_hand,
-        test_scoring,
-        test_level_progression,
-        test_full_game,
-        test_game_no_rule_violations,
-        test_finder_pick_lead,
-        test_edge_straight_no_two,
-        test_edge_straight_with_wild_fills_two,
-        test_edge_all_wild_pair,
-        test_edge_wild_cannot_sub_joker,
-        test_edge_triple_pair_wild,
-        test_edge_bomb_size_limit,
-    ]
-    failed = 0
-    for test in tests:
-        try:
-            test()
-        except Exception as e:
-            print(f"  FAIL {test.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{failed}/{len(tests)} tests failed")
+if __name__ == '__main__':
+    import pytest
+    pytest.main([__file__, '-v'])

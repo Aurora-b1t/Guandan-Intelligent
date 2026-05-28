@@ -15,7 +15,13 @@ from ..card import Card, Rank
 
 
 class CardCounter:
-    """Tracks which cards have been seen and where unseen cards might be."""
+    """Tracks which cards have been seen and where unseen cards might be.
+
+    .. deprecated::
+        Use ``CardTracker`` from ``action_log.py`` instead.
+        ``CardTracker`` integrates with ``ActionLog`` and provides
+        the same functionality plus pass-history awareness.
+    """
 
     def __init__(self, own_hand: Tuple[Card, ...]):
         """Initialize with own hand (these cards are known to us)."""

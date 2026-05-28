@@ -12,28 +12,72 @@ Run: python -m guandan.ui.web.app
 
 import json
 import os
+import time
 import uuid
+from pathlib import Path
+
 from flask import Flask, jsonify, render_template, request, session
 
 from ..interactive import InteractiveGame
 from .arena_api import arena_bp
 
+_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config.json"
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.register_blueprint(arena_bp)
 
-_games: dict = {}
+_games: dict = {}  # {sid: (InteractiveGame, last_access_timestamp)}
+_GAME_TTL = 30 * 60  # 30 minutes
+
+
+def _unwrap_game(entry):
+    """Handle legacy (plain object) and new (tuple) formats."""
+    if isinstance(entry, tuple):
+        return entry[0]
+    return entry  # legacy: bare InteractiveGame
+
+
+def _cleanup_games():
+    """Remove expired game sessions."""
+    now = time.time()
+    expired = []
+    for sid, entry in _games.items():
+        ts = entry[1] if isinstance(entry, tuple) else 0
+        if now - ts > _GAME_TTL:
+            expired.append(sid)
+    for sid in expired:
+        del _games[sid]
 
 
 def _get_game() -> InteractiveGame:
+    _cleanup_games()
     sid = session.get("game_id")
     if sid and sid in _games:
-        return _games[sid]
+        game = _unwrap_game(_games[sid])
+        _games[sid] = (game, time.time())
+        return game
     sid = uuid.uuid4().hex
     session["game_id"] = sid
     game = InteractiveGame(level=2)
-    _games[sid] = game
+    # Load saved config if available
+    try:
+        if _CONFIG_PATH.exists():
+            saved = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+            _normalize_config(saved)
+            game.config.update(saved)
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+
+    _games[sid] = (game, time.time())
     return game
+
+
+def _normalize_config(config: dict):
+    """Convert string player-keys back to int (JSON only supports string keys)."""
+    players = config.get("players")
+    if isinstance(players, dict):
+        config["players"] = {int(k): v for k, v in players.items()}
 
 
 # ==================================================================
@@ -101,7 +145,7 @@ def api_new_game():
     sid = uuid.uuid4().hex
     session["game_id"] = sid
     game = InteractiveGame(level=2)
-    _games[sid] = game
+    _games[sid] = (game, time.time())
     game.start_new_round()
     return jsonify(game.get_state())
 
@@ -153,20 +197,51 @@ def api_debug():
     return jsonify({"hands": hands})
 
 
+@app.route("/api/log")
+def api_log():
+    """Query log entries with optional filters."""
+    category = request.args.get("category")
+    level = request.args.get("level")
+    count = int(request.args.get("count", 200))
+    from ...logging import game_logger
+    entries = game_logger.query(category=category, level=level, count=count)
+    return jsonify({"entries": entries, "count": len(entries)})
+
+
+@app.route("/api/log/categories")
+def api_log_categories():
+    return jsonify({"categories": ["game", "ai", "web", "system"]})
+
+
+@app.route("/api/log/clear", methods=["POST"])
+def api_log_clear():
+    from ...logging import game_logger
+    game_logger.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/log/level", methods=["GET", "POST"])
+def api_log_level():
+    from ...logging import game_logger
+    if request.method == "POST":
+        level = request.get_json().get("level", "INFO")
+        game_logger.set_level(level)
+        return jsonify({"level": game_logger.get_level()})
+    return jsonify({"level": game_logger.get_level()})
+
+
 @app.route("/api/ai_log")
 def api_ai_log():
-    from ...ai.logger import AILogger
-    log = AILogger.get()
-    return jsonify({
-        "entries": log.get_recent(500),
-        "last_decision": log.get_last_decision(),
-    })
+    """Backward-compat: delegates to /api/log?category=ai."""
+    from ...logging import game_logger
+    entries = game_logger.query(category="ai", count=500)
+    return jsonify({"entries": entries, "last_decision": []})
 
 
 @app.route("/api/ai_log/clear", methods=["POST"])
 def api_ai_log_clear():
-    from ...ai.logger import AILogger
-    AILogger.get().clear()
+    from ...logging import game_logger
+    game_logger.clear()
     return jsonify({"ok": True})
 
 
@@ -189,6 +264,10 @@ def api_config():
                     game.config["players"][p] = cfg
             if "auto_play" in data:
                 game._auto_play = data["auto_play"]
+            try:
+                _CONFIG_PATH.write_text(json.dumps(game.config, indent=2), encoding="utf-8")
+            except OSError:
+                pass
     from ...ai.registry import get_schema
     schema = get_schema()
     return jsonify({"config": game.config, "schema": schema})
@@ -196,10 +275,9 @@ def api_config():
 
 @app.route("/api/suggest")
 def api_suggest():
-    """AI suggestion: generate candidates from hand, MC score each, return ranked."""
+    """AI suggestion: use configured MC decider to enumerate+score candidates."""
     from ...ai.player_view import PlayerView
-    from ...ai.agent import MonteCarloAgent, _generate_lead_candidates
-    from ...combo_finder import ComboFinder
+    from ...ai.registry import create_agent_for_player
     from ...combo_compare import can_beat
 
     game = _get_game()
@@ -209,35 +287,41 @@ def api_suggest():
     pid = game.HUMAN_ID
     hand = game.state.hands[pid]
     table = game.state.table
-    level = game.state.level
-    finder = ComboFinder(hand, level)
-
-    # Generate candidates directly from hand (not from log)
     is_lead = table.is_empty or table.last_played_player == pid
     table_combo = table.current_combo
 
-    if is_lead:
-        candidates = _generate_lead_candidates(finder, hand)
-    else:
-        from ...ai.agent import _enumerate_responses
-        candidates = _enumerate_responses(hand, table_combo, finder, level)
-
-    # Run MC to score candidates + pass option
-    can_pass = not is_lead
+    # Use configured agent (default: MCDecider with FullEnumerator)
     view = PlayerView(game.state, pid, game.action_log)
-    mc_agent = MonteCarloAgent(num_samples=60, time_limit_ms=6000)
-    scored = mc_agent.score_candidates(view, candidates, can_pass)
+    agent = create_agent_for_player(game.config, pid)
 
-    # Build result from scored candidates (include PASS)
-    results = []
-    for c, wr in scored:
-        if c is None:
-            results.append({
-                "type": "PASS", "type_cn": "过牌",
-                "cards": [], "length": 0, "is_bomb": False,
-                "win_rate": wr,
-            })
+    # Try analyze() first (MCDecider/ISMCTSDecider), fallback to choose_play()
+    if hasattr(agent, 'analyze'):
+        result = agent.analyze(view)
+        results = []
+        for c in result.candidates:
+            entry = {
+                "type": c.combo_type,
+                "type_cn": "过牌" if c.combo_type == "PASS" else _COMBO_TYPE_CN.get(
+                    _combo_type_value(c.combo_type), c.combo_type),
+                "cards": c.cards,
+                "length": len(c.card_ids),
+                "is_bomb": c.combo_type in ("NORMAL_BOMB", "STRAIGHT_FLUSH", "ROCKET"),
+                "win_rate": c.win_rate or 0,
+                "score": c.score,
+            }
+            results.append(entry)
+    else:
+        # Non-MC agents — just list candidates without scoring
+        from ...combo_finder import ComboFinder
+        from ...ai.agent import _generate_lead_candidates, _enumerate_responses
+        level = game.state.level
+        finder = ComboFinder(hand, level)
+        if is_lead:
+            candidates = _generate_lead_candidates(finder, hand)
         else:
+            candidates = _enumerate_responses(hand, table_combo, finder, level)
+        results = []
+        for c in candidates:
             if not is_lead and not can_beat(c, table_combo):
                 continue
             results.append({
@@ -246,7 +330,8 @@ def api_suggest():
                 "cards": [x.display for x in c.cards],
                 "length": c.length,
                 "is_bomb": c.is_bomb,
-                "win_rate": wr,
+                "win_rate": 0,
+                "score": None,
             })
 
     results.sort(key=lambda c: c.get("win_rate", 0), reverse=True)
@@ -256,6 +341,15 @@ def api_suggest():
         "hand_size": len(hand),
         "message": f"分析了 {len(results)} 个候选",
     })
+
+
+def _combo_type_value(name: str) -> int:
+    """Map combo type name string back to int for _COMBO_TYPE_CN lookup."""
+    from ...combo import ComboType
+    try:
+        return ComboType[name].value
+    except KeyError:
+        return 0
 
 
 @app.route("/api/evaluate", methods=["POST"])
@@ -358,7 +452,7 @@ def api_arena_analyze():
     from ...combo_finder import ComboFinder
     from ...ai.scorer import score_play
     from ...ai.hand_eval import hand_score
-    from ...ai.logger import AILogger
+    from ...logging import game_logger
 
     data = request.get_json()
     card_ids = data.get("hand", [])
@@ -376,7 +470,7 @@ def api_arena_analyze():
         table_combo = parser.parse([Card.from_id(i) for i in table_card_ids])
 
     # Clear old log and analyze
-    AILogger.get().clear()
+    game_logger.clear()
     finder = ComboFinder(hand, level)
 
     if is_lead or table_combo is None:
@@ -419,7 +513,7 @@ def api_arena_analyze():
         "table_display": [Card.from_id(i).display for i in table_card_ids] if table_card_ids else None,
         "is_lead": is_lead,
         "candidates": results,
-        "ai_log": AILogger.get().get_recent(200),
+        "ai_log": game_logger.query(category="ai", count=200),
     })
 
 

@@ -12,10 +12,11 @@ from typing import List, Tuple
 from ..card import Card
 from ..combo import Combo, ComboType
 from ..combo_finder import ComboFinder
+from .candidate_enum import CandidateEnumerator
 from .player_view import PlayerView
 
 
-class MemoryAwareEnumerator:
+class MemoryAwareEnumerator(CandidateEnumerator):
     """Enumerate candidates using pass-history to prefer certain types."""
 
     name = "MemoryAwareEnumerator"

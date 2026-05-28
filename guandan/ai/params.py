@@ -40,22 +40,13 @@ class AIParams:
     # Simulation agent: probability of passing when could play
     sim_pass_prob: float = 0.15
 
+    # Logging
+    log_level: str = "INFO"
+    log_file_enabled: bool = True
+    log_console_enabled: bool = True
+
     def to_dict(self) -> dict:
-        return {
-            "efficiency_weight": self.efficiency_weight,
-            "round_weight": self.round_weight,
-            "bomb_lead_penalty": self.bomb_lead_penalty,
-            "bomb_overuse_penalty": self.bomb_overuse_penalty,
-            "bomb_vs_bomb_bonus": self.bomb_vs_bomb_bonus,
-            "lead_bonus": self.lead_bonus,
-            "follow_bonus": self.follow_bonus,
-            "joker_lead_penalty": self.joker_lead_penalty,
-            "rank_card_lead_penalty": self.rank_card_lead_penalty,
-            "high_rank_lead_penalty": self.high_rank_lead_penalty,
-            "card_usage_weight": self.card_usage_weight,
-            "pass_threshold": self.pass_threshold,
-            "sim_pass_prob": self.sim_pass_prob,
-        }
+        return {f: getattr(self, f) for f in self.__dataclass_fields__}
 
     @classmethod
     def from_dict(cls, d: dict) -> AIParams:

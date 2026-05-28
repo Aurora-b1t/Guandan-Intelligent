@@ -6,6 +6,7 @@ CardTracker: derived statistics for opponent modeling.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -166,3 +167,18 @@ class CardTracker:
                 p_has = min(p_has * (hand_size / total_unseen) * 10, 0.9)
                 prob_no_bomb *= (1 - p_has)
         return 1 - prob_no_bomb
+
+    def prob_player_has_rank(self, player: int, rank: Rank, min_count: int = 1) -> float:
+        """Hypergeometric probability that opponent has >= min_count cards of rank."""
+        unseen_of_rank = self.unseen_by_rank(rank)
+        total_unseen = len(self.unseen_cards())
+        hand_size = self._opp_sizes.get(player, 0)
+        if unseen_of_rank == 0 or hand_size == 0 or total_unseen == 0:
+            return 0.0
+        prob = 0.0
+        for k in range(min_count, min(hand_size, unseen_of_rank) + 1):
+            if total_unseen - unseen_of_rank >= hand_size - k:
+                prob += (math.comb(unseen_of_rank, k) *
+                         math.comb(total_unseen - unseen_of_rank, hand_size - k) /
+                         math.comb(total_unseen, hand_size))
+        return min(prob, 1.0)

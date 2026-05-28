@@ -12,7 +12,6 @@ from ..combo import Combo
 from ..combo_finder import ComboFinder
 from ..combo_compare import can_beat
 from .player_view import PlayerView
-from .memory_enumerator import MemoryAwareEnumerator
 
 
 class CandidateEnumerator:
@@ -99,11 +98,16 @@ class TopNEnumerator(CandidateEnumerator):
         return 0
 
 
-# Registry
+# Registry (memory uses lazy import to avoid circular dependency)
+def _get_memory_enumerator():
+    from .memory_enumerator import MemoryAwareEnumerator
+    return MemoryAwareEnumerator
+
+
 _ENUMERATORS: dict = {
     "full": FullEnumerator,
     "top_n": TopNEnumerator,
-    "memory": MemoryAwareEnumerator,
+    "memory": _get_memory_enumerator,
 }
 
 
@@ -112,5 +116,7 @@ def list_enumerators() -> List[str]:
 
 
 def create_enumerator(enum_id: str, **kw) -> CandidateEnumerator:
-    cls = _ENUMERATORS.get(enum_id, FullEnumerator)
-    return cls(**kw)
+    factory_or_cls = _ENUMERATORS.get(enum_id, FullEnumerator)
+    if callable(factory_or_cls) and not isinstance(factory_or_cls, type):
+        return factory_or_cls()  # lazy factory
+    return factory_or_cls(**kw)

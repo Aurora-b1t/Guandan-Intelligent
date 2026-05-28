@@ -295,28 +295,5 @@ def test_endgame_lead_with_straight():
 # ==================================================================
 
 if __name__ == '__main__':
-    print("Running Guandan AI tests...\n")
-    tests = [
-        test_hand_score_empty,
-        test_hand_score_bomb_rich,
-        test_hand_score_with_wild,
-        test_choose_better_play,
-        test_prefer_pass_over_bad_play,
-        test_bomb_vs_nonbomb_decision,
-        test_card_counter,
-        test_heuristic_agent_lead,
-        test_heuristic_agent_responds,
-        test_montecarlo_agent_basic,
-        test_endgame_should_not_waste_bomb,
-        test_endgame_lead_with_straight,
-    ]
-    failed = 0
-    for test in tests:
-        try:
-            test()
-        except Exception as e:
-            print(f"  FAIL {test.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{failed}/{len(tests)} tests failed")
+    import pytest
+    pytest.main([__file__, '-v'])

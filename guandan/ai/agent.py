@@ -25,9 +25,10 @@ from ..deck import Deck
 from ..game_state import GameState
 from ..rules import RulesEngine
 from ..score import calculate_result
+from ..state_utils import clone_state, apply_play, start_new_trick, next_active_player, did_team_win
 from .scorer import choose_best_play, score_play
 from .opponent import CardCounter
-from .logger import ai_log
+from ..logging import ai_log
 from .player_view import PlayerView
 from .params import AIParams, DEFAULT_PARAMS
 
@@ -589,17 +590,18 @@ class MonteCarloAgent(BaseAgent):
         Returns True if my team wins.
         """
         my_id = view.player_id
-        sim_state = _clone_full_state_from_view(view)
+        my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
+        sim_state = clone_state(view._state)
 
         # Apply my play (or pass)
         if my_play is not None:
-            _apply_play_to_state(sim_state, my_id, my_play)
+            apply_play(sim_state, my_id, my_play)
         else:
             sim_state.table.record_pass(my_id)
             sim_state.current_player = (my_id + 1) % 4
 
         if len(sim_state.finished_positions) >= 3:
-            return self._did_i_win(sim_state, my_id)
+            return did_team_win(sim_state, my_team)
 
         # Deal unseen cards using tracker (constrained sampling)
         if view.tracker is not None:
@@ -628,16 +630,13 @@ class MonteCarloAgent(BaseAgent):
                     for i, h in enumerate(sim_state.hands)
                 )
                 idx += size
-
-        my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
-
         # Simulate remainder using configured simulation model
         sim_agent = self._make_sim_agent(my_id)
         agents = [sim_agent for _ in range(4)]
 
         for _ in range(200):  # safety limit
             if len(sim_state.finished_positions) >= 3:
-                return self._did_i_win(sim_state, my_id)
+                return did_team_win(sim_state, my_team)
 
             table = sim_state.table
             if table.last_played_player >= 0:
@@ -645,10 +644,10 @@ class MonteCarloAgent(BaseAgent):
                                 if p != table.last_played_player]
                 if table.pass_count >= len(other_active):
                     sim_state.current_player = table.last_played_player
-                    _start_new_trick(sim_state)
+                    start_new_trick(sim_state)
                     continue
 
-            current = _next_active_player(sim_state, sim_state.current_player)
+            current = next_active_player(sim_state, sim_state.current_player)
             agent = agents[current]
             sim_hand = sim_state.hands[current]
             # InformedAgent needs full state; others use PlayerView
@@ -671,26 +670,13 @@ class MonteCarloAgent(BaseAgent):
                 play_cards = []
 
             if play_cards:
-                _apply_play_to_state(sim_state, current, result.resolved_combo)
+                apply_play(sim_state, current, result.resolved_combo)
             else:
                 sim_state.table.record_pass(current)
                 sim_state.current_player = (current + 1) % 4
 
         # Fallback: check result
-        return self._did_i_win(sim_state, my_id)
-
-    def _did_i_win(self, state: GameState, my_id: int) -> bool:
-        """Check if my team won given the finish order."""
-        my_team = {0: 0, 1: 1, 2: 0, 3: 1}[my_id]
-        if len(state.finished_positions) >= 3:
-            result = calculate_result(state.finished_positions)
-            return result.winning_team == my_team
-        # Not enough finishers — guess from who's ahead
-        if state.finished_positions:
-            first = state.finished_positions[0]
-            first_team = {0: 0, 1: 1, 2: 0, 3: 1}[first]
-            return first_team == my_team
-        return False
+        return did_team_win(sim_state, my_team)
 
     def _make_sim_agent(self, player_id=None):
         """Create a simulation agent based on config."""
@@ -700,75 +686,7 @@ class MonteCarloAgent(BaseAgent):
         return InformedAgent()
 
 
-# ==================================================================
-# Simulation helpers
-# ==================================================================
-
-def _clone_full_state_from_view(view: PlayerView) -> GameState:
-    """Reconstruct a full GameState from a PlayerView for simulation.
-
-    Since PlayerView hides opponent hands, we need the FULL state.
-    This is accessed via view._state which holds the original reference.
-    """
-    return _clone_state(view._state)
-
-
-def _clone_state(state: GameState) -> GameState:
-    """Deep-copy a game state for simulation."""
-    # Card objects are frozen and immutable — shallow copy of tuples is safe
-    from ..table import TableState
-    new_table = TableState(
-        current_combo=state.table.current_combo,
-        last_played_player=state.table.last_played_player,
-        pass_count=state.table.pass_count,
-        trick_leader=state.table.trick_leader,
-        trick_history=list(state.table.trick_history),
-    )
-    new_state = GameState(
-        level=state.level,
-        round_number=state.round_number,
-        hands=state.hands,
-        played_cards=list(state.played_cards),
-        finished_positions=list(state.finished_positions),
-        current_player=state.current_player,
-        table=new_table,
-        trick_number=state.trick_number,
-    )
-    return new_state
-
-
-def _apply_play_to_state(state: GameState, player_id: int, combo: Combo):
-    """Apply a play (mutates state)."""
-    hand = state.hands[player_id]
-    played_ids = {c.id for c in combo.cards}
-    new_hand = tuple(c for c in hand if c.id not in played_ids)
-    state.hands = tuple(
-        new_hand if i == player_id else h
-        for i, h in enumerate(state.hands)
-    )
-    state.played_cards.extend(combo.cards)
-    state.table.record_play(player_id, combo)
-    state.current_player = (player_id + 1) % 4
-
-    if not new_hand:
-        state.finished_positions.append(player_id)
-
-
-def _start_new_trick(state: GameState):
-    """Begin a new trick."""
-    leader = _next_active_player(state, state.current_player)
-    state.table.reset_for_new_trick(leader)
-    state.trick_number += 1
-    state.current_player = leader
-
-
-def _next_active_player(state: GameState, from_player: int) -> int:
-    for _ in range(4):
-        if from_player not in state.finished_positions:
-            return from_player
-        from_player = (from_player + 1) % 4
-    return from_player
-
+# Module-level helpers (non-duplicated, kept for backward compat until Phase 5)
 
 def _deal_subset(unseen: List[Card], start: int, count: int, counter: CardCounter) -> Tuple[Card, ...]:
     """Deal a subset of unseen cards, keeping known cards in place."""
@@ -870,7 +788,7 @@ class InformedAgent(BaseAgent):
         my_rounds_saved = rounds_me_before - rounds_me_after
 
         # 2. Can the next active player beat this? (deterministic: we know their hand)
-        next_player = _next_active_player(state, (player_id + 1) % 4)
+        next_player = next_active_player(state, (player_id + 1) % 4)
         can_be_beaten_by = []
         cannot_be_beaten_by = []
         for p in range(4):

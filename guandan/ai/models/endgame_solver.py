@@ -14,6 +14,7 @@ from ...combo import Combo
 from ...combo_finder import ComboFinder
 from ...combo_compare import can_beat
 from ...game_state import GameState
+from ...state_utils import clone_state, apply_play
 from ..player_view import PlayerView
 from .interface import TestableModel, AnalyzeResult, CandidateResult
 
@@ -73,8 +74,8 @@ class EndgameExactSolver(TestableModel):
 
         for c in candidates:
             # Apply play
-            sim_state = self._clone_state(state)
-            self._apply_play(sim_state, pid, c)
+            sim_state = clone_state(state)
+            apply_play(sim_state, pid, c)
 
             self._nodes_searched = 0
             self._max_depth_reached = 0
@@ -105,7 +106,7 @@ class EndgameExactSolver(TestableModel):
         results.sort(key=lambda r: r.score or 0, reverse=True)
 
         if can_pass:
-            sim_state = self._clone_state(state)
+            sim_state = clone_state(state)
             sim_state.table.record_pass(pid)
             sim_state.current_player = (pid + 1) % 4
             outcome = self._evaluate(sim_state, (pid + 1) % 4, my_team, 0)
@@ -184,8 +185,8 @@ class EndgameExactSolver(TestableModel):
         is_my_team = teams[current_pid] == my_team
 
         for c in candidates:
-            sim = self._clone_state(state)
-            self._apply_play(sim, current_pid, c)
+            sim = clone_state(state)
+            apply_play(sim, current_pid, c)
             val = self._evaluate(sim, (current_pid + 1) % 4, my_team, depth + 1)
             if is_my_team:
                 best = max(best, val)
@@ -193,7 +194,7 @@ class EndgameExactSolver(TestableModel):
                 best = max(best, -val)  # opponent's best is our worst
 
         if can_pass:
-            sim = self._clone_state(state)
+            sim = clone_state(state)
             sim.table.record_pass(current_pid)
             sim.current_player = (current_pid + 1) % 4
             val = self._evaluate(sim, (current_pid + 1) % 4, my_team, depth + 1)
@@ -203,31 +204,3 @@ class EndgameExactSolver(TestableModel):
                 best = max(best, -val)
 
         return best if best > -999 else 0
-
-    def _clone_state(self, state: GameState) -> GameState:
-        from ...table import TableState
-        t = TableState(
-            current_combo=state.table.current_combo,
-            last_played_player=state.table.last_played_player,
-            pass_count=state.table.pass_count,
-            trick_leader=state.table.trick_leader,
-            trick_history=list(state.table.trick_history),
-        )
-        return GameState(
-            level=state.level, round_number=state.round_number,
-            hands=state.hands, played_cards=list(state.played_cards),
-            finished_positions=list(state.finished_positions),
-            current_player=state.current_player, table=t,
-            trick_number=state.trick_number,
-        )
-
-    def _apply_play(self, state: GameState, pid: int, combo: Combo):
-        hand = state.hands[pid]
-        ids = {c.id for c in combo.cards}
-        new_hand = tuple(c for c in hand if c.id not in ids)
-        state.hands = tuple(new_hand if i == pid else h for i, h in enumerate(state.hands))
-        state.played_cards.extend(combo.cards)
-        state.table.record_play(pid, combo)
-        state.current_player = (pid + 1) % 4
-        if not new_hand:
-            state.finished_positions.append(pid)
