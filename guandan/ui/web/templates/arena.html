@@ -69,11 +69,9 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
 /* Override: player zones position the same way as game.html */
 .arena-tbl .player-zone { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .arena-tbl .player-zone.you   { bottom: 6px; left: 50%; transform: translateX(-50%); width: 80%; }
-.arena-tbl .player-zone.left  { left: 6px; top: 50%; transform: translateY(-50%); max-width: 240px; }
-.arena-tbl .player-zone.right { right: 6px; top: 50%; transform: translateY(-50%); max-width: 240px; }
+.arena-tbl .player-zone.left  { left: 6px; top: 50%; transform: translateY(-50%); max-width: 130px; }
+.arena-tbl .player-zone.right { right: 6px; top: 50%; transform: translateY(-50%); max-width: 130px; }
 /* Custom builder: narrower side zones */
-#custom-builder .player-zone.left  { max-width: 130px !important; }
-#custom-builder .player-zone.right { max-width: 130px !important; }
 .arena-tbl .player-zone.partner { top: 6px; left: 50%; transform: translateX(-50%); width: 80%; }
 .arena-tbl .zone-header { font-size: 0.7em; color: #bbb; display: flex; align-items: center; gap: 4px; }
 .arena-tbl .zone-header .name { font-weight: bold; }
@@ -207,9 +205,9 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
 .czpa-btn.czpa-pass.active { background: #c0392b; border-color: #c0392b; color: #fff; }
 .czpa-btn.czpa-turn.active { background: #27ae60; border-color: #27ae60; color: #fff; }
 .cz-pcards { display: inline-flex; gap: 1px; flex-wrap: wrap; }
-.cz-pcards .card { width: 22px; height: 32px; cursor: pointer; border-width: 1px; }
-.cz-pcards .card .card-rank { font-size: 0.45em; top: 0; left: 1px; }
-.cz-pcards .card .card-suit-big { font-size: 0.65em; }
+.cz-pcards .card { width: 40px; height: 56px; cursor: pointer; border-width: 1px; }
+.cz-pcards .card .card-rank { font-size: 0.55em; top: 0; left: 1px; }
+.cz-pcards .card .card-suit-big { font-size: 0.85em; }
 .cz-hand { min-height: 28px; padding: 2px; }
 .cz-cnt { color: #daa520; font-weight: bold; margin-left: 4px; font-size: 0.85em; }
 .pool-card { display: inline-block; margin: 1px; cursor: pointer; transition: transform 0.1s, opacity 0.15s, box-shadow 0.12s; }
@@ -319,12 +317,13 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
           <div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:0.78em">
             <span style="color:#aaa">级牌</span>
             <div style="display:flex;align-items:center;gap:4px">
-              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px;width:22px" onclick="C.level=Math.max(2,C.level-1);renderCustomConfig()">-</button>
+              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px;width:22px" onclick="setLevel(Math.max(2,C.level-1))">-</button>
               <span id="custom-level" style="color:#daa520;font-weight:bold;min-width:20px;text-align:center">2</span>
-              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px;width:22px" onclick="C.level=Math.min(14,C.level+1);renderCustomConfig()">+</button>
+              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px;width:22px" onclick="setLevel(Math.min(14,C.level+1))">+</button>
             </div>
             <span id="cz-valid" style="font-size:0.73em"></span>
-            <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="customClearTrick()">清空本轮</button>
+            <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="undoAction()">撤销</button>
+              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="customClearTrick()">清空本轮</button>
           </div>
         </div>
       </div>
@@ -352,7 +351,12 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
     </div>
     <div class="resize-handle" id="rh-pl" data-target="aside-pl" data-side="right"></div>
 
-    <div class="arena-tbl" id="tbl-p"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-size:0.85em">选择场景开始</div></div>
+    <div class="arena-tbl" id="tbl-p">
+      <div class="cz-play-area you" id="ppa-0"><span class="cz-pcards" id="ppcard-0"></span></div>
+      <div class="cz-play-area right" id="ppa-1"><span class="cz-pcards" id="ppcard-1"></span></div>
+      <div class="cz-play-area partner" id="ppa-2"><span class="cz-pcards" id="ppcard-2"></span></div>
+      <div class="cz-play-area left" id="ppa-3"><span class="cz-pcards" id="ppcard-3"></span></div>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-size:0.85em">选择场景开始</div></div>
 
     <div class="resize-handle" id="rh-pr" data-target="aside-pr" data-side="left"></div>
     <div class="aside" id="aside-pr" style="width:340px">
@@ -377,7 +381,12 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
     </div>
     <div class="resize-handle" id="rh-tl" data-target="aside-tl" data-side="right"></div>
 
-    <div class="arena-tbl" id="tbl-t"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-size:0.85em">选择场景开始</div></div>
+    <div class="arena-tbl" id="tbl-t">
+      <div class="cz-play-area you" id="tpa-0"><span class="cz-pcards" id="tpcard-0"></span></div>
+      <div class="cz-play-area right" id="tpa-1"><span class="cz-pcards" id="tpcard-1"></span></div>
+      <div class="cz-play-area partner" id="tpa-2"><span class="cz-pcards" id="tpcard-2"></span></div>
+      <div class="cz-play-area left" id="tpa-3"><span class="cz-pcards" id="tpcard-3"></span></div>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-size:0.85em">选择场景开始</div></div>
 
     <div class="resize-handle" id="rh-tr" data-target="aside-tr" data-side="left"></div>
     <div class="aside" id="aside-tr" style="width:340px">
@@ -918,6 +927,21 @@ function buildTable(containerId, st) {
       pd.innerHTML = `<span class="combo-tag">${act.combo.type_cn||act.combo.type}</span> ` + (act.combo.cards||[]).map(ac).join('');
     }
   }
+
+  // Update play areas (状态区)
+  const paPrefix = containerId === 'tbl-p' ? 'p' : 't';
+  for (let p = 0; p <= 3; p++) {
+    const pc = document.getElementById(paPrefix + 'pcard-' + p);
+    if (!pc) continue;
+    const act = lastAction[p];
+    if (!act) {
+      pc.innerHTML = cp === p ? '<span style="color:#27ae60;font-size:0.72em">轮到</span>' : '';
+    } else if (act.pass) {
+      pc.innerHTML = '<span style="color:#e67e22;font-size:0.72em">过</span>';
+    } else if (act.combo) {
+      pc.innerHTML = '<span style="color:#daa520;font-size:0.65em">' + (act.combo.type_cn||act.combo.type) + '</span> ' + (act.combo.cards||[]).map(ac).join('');
+    }
+  }
 }
 
 function toggleArenaCard(cid) {
@@ -1278,7 +1302,49 @@ let C = {
   abort: null,
   _suppressRender: false,
   sim_mode: false,
+  _history: [],
+  _maxHistory: 50,
 };
+
+// Undo helpers
+function pushUndoState() {
+  if (C.sim_mode) return;
+  C._history.push({
+    hands: {0:[...C.hands[0]], 1:[...C.hands[1]], 2:[...C.hands[2]], 3:[...C.hands[3]]},
+    zone_play: {
+      0:{action:C.zone_play[0].action, cards:[...C.zone_play[0].cards]},
+      1:{action:C.zone_play[1].action, cards:[...C.zone_play[1].cards]},
+      2:{action:C.zone_play[2].action, cards:[...C.zone_play[2].cards]},
+      3:{action:C.zone_play[3].action, cards:[...C.zone_play[3].cards]},
+    },
+    level: C.level,
+    focus_player: C.focus_player,
+    focus_play: C.focus_play,
+  });
+  if (C._history.length > C._maxHistory) C._history.shift();
+}
+function undoAction() {
+  if (C._history.length === 0) return;
+  const s = C._history.pop();
+  C.hands = s.hands;
+  C.zone_play = s.zone_play;
+  C.level = s.level;
+  C.focus_player = s.focus_player;
+  C.focus_play = s.focus_play;
+  renderCustomAll();
+}
+function setLevel(val) {
+  pushUndoState();
+  C.level = val;
+  renderCustomAll();
+}
+
+// Ctrl+Z undo
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'z' && !e.target.closest('input,select,textarea')) {
+    e.preventDefault(); undoAction();
+  }
+});
 
 // Helpers
 C.getCurrentPlayer = () => { for (let p=0;p<=3;p++) if (C.zone_play[p].action==='turn') return p; return 0; };
@@ -1419,31 +1485,11 @@ function renderCardPool() {
 // ==================================================================
 function poolClick(cid, event) {
   if (C.allAssignedCards().has(cid)) return;
+  pushUndoState();
 
   if (C.focus_play !== null) {
-    // Ensure action is 'play' when adding cards
     C.zone_play[C.focus_play].action = 'play';
     C.zone_play[C.focus_play].cards.push(cid);
-    // Async validate combo
-    const pid = C.focus_play;
-    const cardIds = [...C.zone_play[pid].cards];
-    fetch('/api/arena/check_combo', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({card_ids: cardIds, level: C.level}),
-    }).then(r => r.json()).then(data => {
-      if (!data.valid && C.zone_play[pid].cards.length === cardIds.length) {
-        C.zone_play[pid].cards.pop();
-        renderCustomAll();
-        const pa = document.getElementById('czpa-' + pid);
-        if (pa) {
-          pa.classList.add('combo-error');
-          setTimeout(() => pa.classList.remove('combo-error'), 600);
-        }
-      } else {
-        renderCustomAll();
-      }
-    });
   } else if (C.focus_player >= 0) {
     C.hands[C.focus_player].push(cid);
   }
@@ -1453,6 +1499,7 @@ function poolClick(cid, event) {
 function customFocus(pid) {
   event.stopPropagation();
   autoClearEmptyPlay();
+  validatePlayCombos();
   C.focus_player = pid;
   C.focus_play = null;
   document.querySelectorAll('#custom-builder .player-zone').forEach(el => el.classList.remove('focused'));
@@ -1464,6 +1511,7 @@ function customFocus(pid) {
 function customFocusPlay(pid) {
   event.stopPropagation();
   autoClearEmptyPlay();
+  validatePlayCombos();
   C.focus_play = pid;
   C.focus_player = -1;
   if (C.zone_play[pid].action !== 'play') czSetPlay(pid, 'play');
@@ -1475,6 +1523,7 @@ function customFocusPlay(pid) {
 
 function removeFromPlayer(pid, cid, event) {
   event.stopPropagation();
+  pushUndoState();
   const idx = C.hands[pid].indexOf(cid);
   if (idx >= 0) C.hands[pid].splice(idx, 1);
   // Also remove from any zone's play cards
@@ -1486,6 +1535,7 @@ function removeFromPlayer(pid, cid, event) {
 }
 
 function czSetPlay(pid, mode) {
+  pushUndoState();
   // Clicking the active button toggles it off -> pass
   if (C.zone_play[pid].action === mode) mode = 'pass';
   C.zone_play[pid].action = mode;
@@ -1503,6 +1553,7 @@ function czSetPlay(pid, mode) {
 
 function czRemovePlayCard(pid, cid, event) {
   event.stopPropagation();
+  pushUndoState();
   const cards = C.zone_play[pid].cards;
   const idx = cards.indexOf(cid);
   if (idx >= 0) cards.splice(idx, 1);
@@ -1532,6 +1583,26 @@ function czValidate() {
   return {valid:true, reason: hasActions ? '' : '新一轮'};
 }
 
+function validatePlayCombos() {
+  for (let p = 0; p <= 3; p++) {
+    const zp = C.zone_play[p];
+    if (zp.action !== 'play' || !zp.cards || zp.cards.length === 0) continue;
+    fetch('/api/arena/check_combo', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({card_ids: [...zp.cards], level: C.level}),
+    }).then(r => r.json()).then(data => {
+      if (!data.valid) {
+        const pa = document.getElementById('czpa-' + p);
+        if (pa) {
+          pa.classList.add('combo-error');
+          setTimeout(() => pa.classList.remove('combo-error'), 1500);
+        }
+      }
+    });
+  }
+}
+
 function autoClearEmptyPlay() {
   for (let p = 0; p <= 3; p++) {
     if (C.zone_play[p].action === 'play' && (!C.zone_play[p].cards || C.zone_play[p].cards.length === 0)) {
@@ -1542,6 +1613,7 @@ function autoClearEmptyPlay() {
 
 function customClearFocus(event) {
   autoClearEmptyPlay();
+  validatePlayCombos();
   C.focus_player = -1;
   C.focus_play = null;
   document.querySelectorAll('#custom-builder .player-zone').forEach(el => el.classList.remove('focused'));
@@ -1550,6 +1622,7 @@ function customClearFocus(event) {
 }
 
 function customClearTrick() {
+  pushUndoState();
   for (let p = 0; p <= 3; p++) {
     C.zone_play[p] = {action: (p === C.getCurrentPlayer() ? 'turn' : 'pass'), cards: []};
   }
@@ -1639,6 +1712,7 @@ function renderCustomConfig() {
 // Quick actions
 // ==================================================================
 function customRandomDeal() {
+  pushUndoState();
   customClear();
   const allIds = [];
   for (let i = 0; i < 108; i++) allIds.push(i);
@@ -1653,6 +1727,7 @@ function customRandomDeal() {
 }
 
 function customDealRemaining() {
+  pushUndoState();
   const assigned = C.allAssignedCards();
   const remaining = [];
   for (let i = 0; i < 108; i++) {
@@ -1678,6 +1753,7 @@ function customDealRemaining() {
 }
 
 function customClear() {
+  pushUndoState();
   C.hands = {0:[], 1:[], 2:[], 3:[]};
   for (let p = 0; p <= 3; p++) C.zone_play[p] = {action:(p===0?'turn':'pass'), cards:[]};
   C.focus_play = null;
