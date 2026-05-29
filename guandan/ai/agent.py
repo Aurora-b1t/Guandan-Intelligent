@@ -154,9 +154,9 @@ def _enumerate_responses(hand: Tuple[Card, ...], table_combo: Combo,
         resp = finder.pick_response(table_combo)
         if resp: candidates.append(resp)
 
-    # Add bomb
+    # Add bomb (must be able to beat the table combo)
     bomb = finder._find_any_bomb()
-    if bomb:
+    if bomb and can_beat(bomb, table_combo):
         candidates.append(bomb)
     return candidates
 

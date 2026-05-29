@@ -190,6 +190,55 @@ class Simulator:
         self._check_trick_end()
         return ""
 
+    @classmethod
+    def from_custom(cls, hands: dict, table: list, table_player: int,
+                    current_player: int, level: int = 2):
+        """Factory: build a Simulator from raw hand assignments.
+
+        Args:
+            hands: {0: [card_ids], 1: [card_ids], 2: [card_ids], 3: [card_ids]}
+            table: list of card_ids on the table (optional, empty list for none)
+            table_player: who played the table combo (used as trick_leader)
+            current_player: who should play next
+            level: game level (2-14)
+        """
+        sim = cls.__new__(cls)
+        sim.level = level
+        sim.rules = RulesEngine(level)
+        sim._acc_trick_history = []
+
+        hands_tuple = tuple(
+            tuple(Card.from_id(i) for i in hands.get(p, [])) for p in range(4)
+        )
+
+        # Build table
+        trick_leader = table_player if table else current_player
+        table_state = TableState(trick_leader=trick_leader, pass_count=0)
+        if table:
+            parser = ComboParser(level)
+            combo = parser.parse([Card.from_id(i) for i in table])
+            if combo:
+                table_state.record_play(table_player, combo)
+
+        # All cards not in any hand or on table → played
+        assigned = set()
+        for p in range(4):
+            assigned.update(hands.get(p, []))
+        assigned.update(table)
+        unused = [i for i in range(108) if i not in assigned]
+        played_cards = [Card.from_id(i) for i in unused]
+
+        finished = [p for p in range(4) if len(hands_tuple[p]) == 0]
+
+        sim.state = GameState(
+            level=level, round_number=1,
+            hands=hands_tuple, current_player=current_player,
+            table=table_state, trick_number=1,
+            played_cards=played_cards,
+            finished_positions=finished,
+        )
+        return sim
+
     def _check_trick_end(self):
         """If trick ended, start a new trick."""
         table = self.state.table
@@ -681,6 +730,71 @@ def sim_init():
     return jsonify(state)
 
 
+@arena_bp.route("/api/arena/sim/init_custom", methods=["POST"])
+def sim_init_custom():
+    """Create a simulator from a custom card assignment.
+
+    Request:
+    {
+        hands: {"0": [card_ids], "1": [card_ids], "2": [card_ids], "3": [card_ids]},
+        table: [card_ids] | [],
+        table_player: 2,
+        current_player: 0,
+        level: 2
+    }
+    """
+    data = request.get_json() or {}
+    hands_raw = data.get("hands", {})
+    table = data.get("table") or []
+    table_player = data.get("table_player", 0)
+    current_player = data.get("current_player", 0)
+    level = data.get("level", 2)
+
+    # Validate and normalize hands
+    hands = {}
+    all_assigned = set()
+    for p in range(4):
+        ids = hands_raw.get(str(p), [])
+        if not isinstance(ids, list):
+            return jsonify({"error": f"hands.{p} must be a list of card IDs"}), 400
+        for cid in ids:
+            if not (0 <= cid <= 107):
+                return jsonify({"error": f"Invalid card ID {cid}"}), 400
+            if cid in all_assigned:
+                return jsonify({"error": f"Duplicate card ID {cid}"}), 400
+            all_assigned.add(cid)
+        hands[p] = ids
+
+    # Validate table
+    for cid in table:
+        if not (0 <= cid <= 107):
+            return jsonify({"error": f"Invalid table card ID {cid}"}), 400
+        if cid in all_assigned:
+            return jsonify({"error": f"Table card {cid} already assigned to a player"}), 400
+        all_assigned.add(cid)
+
+    # Validate level
+    if not (2 <= level <= 14):
+        return jsonify({"error": "Level must be 2-14"}), 400
+
+    # Validate table_player and current_player
+    if not (0 <= table_player <= 3):
+        return jsonify({"error": "table_player must be 0-3"}), 400
+    if not (0 <= current_player <= 3):
+        return jsonify({"error": "current_player must be 0-3"}), 400
+
+    sid = uuid.uuid4().hex
+    try:
+        sim = Simulator.from_custom(hands, table, table_player, current_player, level)
+    except Exception as e:
+        return jsonify({"error": f"Failed to create simulator: {e}"}), 500
+
+    _simulators[sid] = (sim, time.time())
+    state = sim.get_state()
+    state["sim_id"] = sid
+    return jsonify(state)
+
+
 @arena_bp.route("/api/arena/sim/state", methods=["POST"])
 def sim_state():
     """Get current simulator state."""
@@ -774,6 +888,37 @@ def sim_analyze():
         "current_player": current_pid,
         "results": results,
     })
+
+
+@arena_bp.route("/api/arena/check_combo", methods=["POST"])
+def check_combo():
+    """Validate whether a set of cards forms a legal combo."""
+    data = request.get_json() or {}
+    card_ids = data.get("card_ids", [])
+    level = data.get("level", 2)
+
+    if not card_ids:
+        return jsonify({"valid": True, "combo_type": None, "error": ""})
+
+    try:
+        cards = [Card.from_id(i) for i in card_ids]
+    except Exception:
+        return jsonify({"valid": False, "combo_type": None, "error": "Invalid card ID"})
+
+    parser = ComboParser(level)
+    combo = parser.parse(cards)
+    if combo:
+        return jsonify({
+            "valid": True,
+            "combo_type": _COMBO_TYPE_CN.get(combo.combo_type.value, combo.combo_type.name),
+            "error": "",
+        })
+    else:
+        return jsonify({
+            "valid": False,
+            "combo_type": None,
+            "error": "无法识别的牌型组合",
+        })
 
 
 _COMBO_TYPE_CN = {

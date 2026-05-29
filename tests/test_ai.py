@@ -290,6 +290,104 @@ def test_endgame_lead_with_straight():
     print(f"  PASS test_endgame_lead_with_straight (chose {best.combo_type.name})")
 
 
+def test_weaker_bomb_cannot_beat_stronger_bomb():
+    """Table has KKKK (4-K bomb). Hand has 9999 (4-9 bomb, no wilds).
+    Model must NOT choose 9999 as a candidate — it cannot beat KKKK."""
+    from guandan.combo_compare import can_beat
+    from guandan.ai.agent import _enumerate_responses
+
+    parser = ComboParser(level=2)
+    kings = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(13) and not _c(i).is_wild(2)][:4]
+    nines = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(9) and not _c(i).is_wild(2)][:4]
+    wild_ids = {i for i in range(108) if _c(i).is_wild(2)}
+    extras = [_c(i) for i in range(108)
+              if i not in {c.id for c in nines} | wild_ids][:23]
+
+    hand = tuple(nines + extras)
+    combo_K = parser.parse(kings)
+    finder = ComboFinder(hand, 2)
+
+    # Verify can_beat is correct
+    combo_9 = parser.parse(nines)
+    assert not can_beat(combo_9, combo_K), "9999 should NOT beat KKKK"
+
+    # Enumerate responses
+    responses = _enumerate_responses(hand, combo_K, finder, 2)
+
+    # 9999 should NOT appear as a candidate
+    nine_ids = {c.id for c in nines}
+    for resp in responses:
+        resp_ids = {c.id for c in resp.cards}
+        if resp_ids == nine_ids:
+            raise AssertionError(
+                "BUG: 9999 bomb was included as response to KKKK "
+                f"(candidates: {[r.combo_type.name + ' ' + str(r.length) for r in responses]})"
+            )
+
+    assert len(responses) == 0, \
+        f"No legal responses expected (9999 cannot beat KKKK), got {len(responses)}"
+    print("  PASS test_weaker_bomb_cannot_beat_stronger_bomb")
+
+
+def test_larger_bomb_can_beat_smaller_bomb():
+    """Table has 4444 (4-4 bomb). Hand has 9999 (4-9 bomb).
+    Model SHOULD include 9999 as a candidate."""
+    from guandan.ai.agent import _enumerate_responses
+
+    parser = ComboParser(level=2)
+    fours = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(4) and not _c(i).is_wild(2)][:4]
+    nines = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(9) and not _c(i).is_wild(2)][:4]
+    wild_ids = {i for i in range(108) if _c(i).is_wild(2)}
+    extras = [_c(i) for i in range(108)
+              if i not in {c.id for c in nines} | wild_ids][:23]
+
+    hand = tuple(nines + extras)
+    combo_4 = parser.parse(fours)
+    finder = ComboFinder(hand, 2)
+
+    responses = _enumerate_responses(hand, combo_4, finder, 2)
+
+    nine_ids = {c.id for c in nines}
+    found = any({c.id for c in resp.cards} == nine_ids for resp in responses)
+    assert found, (
+        f"9999 bomb should be a legal response to 4444, "
+        f"got: {[r.combo_type.name + ' ' + str(r.length) for r in responses]}"
+    )
+    print("  PASS test_larger_bomb_can_beat_smaller_bomb")
+
+
+def test_bomb_with_wild_can_beat_larger_bomb():
+    """Table has KKKK (4-K bomb). Hand has 9999 + wild card H2 (at level 2).
+    Model SHOULD include 9999+H2 (5-card bomb) as candidate."""
+    from guandan.ai.agent import _enumerate_responses
+
+    parser = ComboParser(level=2)
+    kings = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(13) and not _c(i).is_wild(2)][:4]
+    nines = [_c(i) for i in range(108)
+             if _c(i).rank == Rank(9) and not _c(i).is_wild(2)][:4]
+    wild = [_c(i) for i in range(108) if _c(i).is_wild(2)][:1]  # one H2
+    extras = [_c(i) for i in range(108)
+              if i not in {c.id for c in nines} and i not in {c.id for c in wild}][:22]
+
+    hand = tuple(nines + wild + extras)
+    combo_K = parser.parse(kings)
+    finder = ComboFinder(hand, 2)
+
+    responses = _enumerate_responses(hand, combo_K, finder, 2)
+
+    # Should find a 5-card bomb (4 nines + wild)
+    bombs = [r for r in responses if r.combo_type.name == 'NORMAL_BOMB']
+    assert len(bombs) > 0, f"Expected a bomb candidate with wild, got none"
+    assert any(b.length >= 5 for b in bombs), \
+        f"Expected a 5+ card bomb (with wild), got: {[(b.length, b.main_rank) for b in bombs]}"
+    print("  PASS test_bomb_with_wild_can_beat_larger_bomb")
+
+
 # ==================================================================
 # Run all tests
 # ==================================================================
