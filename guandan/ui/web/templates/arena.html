@@ -67,12 +67,12 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
   border-radius: 10px; border: 3px solid #3d7a37;
 }
 /* Override: player zones position the same way as game.html */
-.arena-tbl .player-zone { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 1px; }
-.arena-tbl .player-zone.you   { bottom: 6px; left: 50%; transform: translateX(-50%); width: 80%; }
-.arena-tbl .player-zone.left  { left: 6px; top: 50%; transform: translateY(-50%); max-width: 130px; }
-.arena-tbl .player-zone.right { right: 6px; top: 50%; transform: translateY(-50%); max-width: 130px; }
+.arena-tbl .player-zone { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 4px; }
+.arena-tbl .player-zone.you   { bottom: 6px; left: 50%; transform: translateX(-50%); width: 80%; min-height: 150px; }
+.arena-tbl .player-zone.left  { left: 6px; top: 50%; transform: translateY(-50%); min-width: 130px; max-width: 130px; min-height: 500px; }
+.arena-tbl .player-zone.right { right: 6px; top: 50%; transform: translateY(-50%); min-width: 130px; max-width: 130px; min-height: 500px; }
 /* Custom builder: narrower side zones */
-.arena-tbl .player-zone.partner { top: 6px; left: 50%; transform: translateX(-50%); width: 80%; }
+.arena-tbl .player-zone.partner { top: 6px; left: 50%; transform: translateX(-50%); width: 80%; min-height: 150px; }
 .arena-tbl .zone-header { font-size: 0.7em; color: #bbb; display: flex; align-items: center; gap: 4px; }
 .arena-tbl .zone-header .name { font-weight: bold; }
 .arena-tbl .zone-header .name.you { color: #daa520; }
@@ -164,9 +164,12 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
   padding: 4px;
-  min-height: 60px;
   transition: box-shadow 0.2s, border-color 0.2s;
 }
+#custom-builder .player-zone.you,
+#custom-builder .player-zone.partner { min-height: 150px; }
+#custom-builder .player-zone.left,
+#custom-builder .player-zone.right { min-height: 500px; min-width: 130px; }
 #custom-builder .player-zone:hover { border-color: rgba(255,255,255,0.2); }
 #custom-builder .player-zone.focused { border-color: #daa520; box-shadow: 0 0 16px rgba(218,165,32,0.35); }
 /* Play area — same style as .cz, positioned adjacent to hand zone */
@@ -257,7 +260,7 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
         <div class="pool-acts" style="display:flex;gap:3px;margin-bottom:4px;flex-wrap:wrap">
           <button class="btn btn-g btn-sm" onclick="customRandomDeal()">随机每人27张</button>
           <button class="btn btn-gy btn-sm" onclick="customDealRemaining()">分配剩余牌</button>
-          <button class="btn btn-gy btn-sm" onclick="customClear()">清空</button>
+          <button class="btn btn-gy btn-sm" onclick="customClear()">清空手牌</button>
         </div>
         <div class="scroll-list" id="card-pool" style="max-height:calc(100vh - 280px)"></div>
       </div>
@@ -323,7 +326,7 @@ body { font-family: "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; }
             </div>
             <span id="cz-valid" style="font-size:0.73em"></span>
             <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="undoAction()">撤销</button>
-              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="customClearTrick()">清空本轮</button>
+              <button class="btn btn-gy btn-sm" style="font-size:0.7em;padding:1px 5px" onclick="customClearTrick()">清空牌桌</button>
           </div>
         </div>
       </div>
@@ -889,8 +892,6 @@ function buildTable(containerId, st) {
 
     html += `<div class="player-zone ${pos}${thinking}" id="az-${containerId}-${p}">`;
     html += `<div class="zone-header"><span class="name${p===0?' you':''}">${names[p]}</span><span class="hand-size">${pi.hand_size||cards.length}</span>张${pi.finished?' <span class="finished-tag" style="display:inline">已完成</span>':''}</div>`;
-    html += `<div class="zone-body">`;
-    html += `<div class="play-display" id="apd-${containerId}-${p}"></div>`;
     if (cards.length) {
       html += `<div class="ahc" id="ahc-${containerId}-${p}">${scs(cards).map(c => {
         const sel = P.selected.has(c.id) ? ' selected' : '';
@@ -899,48 +900,36 @@ function buildTable(containerId, st) {
         return ac(c, sel+playable, click);
       }).join('')}</div>`;
     }
-    html += `</div></div>`;
+    html += `</div>`;
   }
 
-  // Center: status + manual play/pass buttons
-  let centerHTML = `<div class="tbl-ctr"><div class="tinfo">级牌 <strong>Lv${st.level||2}</strong> · 回合${st.trick_number||1}</div>`;
-  centerHTML += `<div style="font-size:0.75em;color:#888;margin-top:2px">轮到: <b style="color:#daa520">${names[cp]}</b></div>`;
-  if (st.can_pass) centerHTML += `<div style="font-size:0.65em;color:#888;margin-bottom:3px">可过牌</div>`;
-  centerHTML += `<div style="display:flex;gap:6px;justify-content:center;margin-top:4px">
-    <button class="btn btn-gn btn-sm" onclick="manualPlay()">出牌</button>
-    ${st.can_pass ? `<button class="btn btn-gy btn-sm" onclick="manualPass()">过牌</button>` : ''}
-  </div>
-  <div style="margin-top:4px"><button class="btn btn-gy btn-sm" onclick="customLoadFromSim(P.simState)">在自定义中编辑</button></div>`;
-  centerHTML += `</div>`;
+  // Play areas (状态区)
+  const paPrefix = containerId === 'tbl-p' ? 'p' : 't';
+  html += `<div class="cz-play-area you" id="${paPrefix}a-0"><span class="cz-pcards" id="${paPrefix}pcard-0"></span></div>`;
+  html += `<div class="cz-play-area right" id="${paPrefix}a-1"><span class="cz-pcards" id="${paPrefix}pcard-1"></span></div>`;
+  html += `<div class="cz-play-area partner" id="${paPrefix}a-2"><span class="cz-pcards" id="${paPrefix}pcard-2"></span></div>`;
+  html += `<div class="cz-play-area left" id="${paPrefix}a-3"><span class="cz-pcards" id="${paPrefix}pcard-3"></span></div>`;
+
+  // Center: unified vertical layout
+  let centerHTML = `<div class="tbl-ctr"><div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:0.78em">
+    <div class="tinfo">级牌 <strong>Lv${st.level||2}</strong> · 回合${st.trick_number||1}</div>
+    <div style="font-size:0.75em;color:#888">轮到: <b style="color:#daa520">${names[cp]}</b></div>
+    ${st.can_pass ? '<div style="font-size:0.65em;color:#888">可过牌</div>' : ''}
+    <div style="display:flex;gap:6px;justify-content:center">
+      <button class="btn btn-gn btn-sm" onclick="manualPlay()">出牌</button>
+      ${st.can_pass ? '<button class="btn btn-gy btn-sm" onclick="manualPass()">过牌</button>' : ''}
+    </div>
+    <div style="display:flex;gap:6px;justify-content:center">
+      <button class="btn btn-g btn-sm" onclick="runP()">分析</button>
+      <button class="btn btn-gy btn-sm" onclick="customLoadFromSim(P.simState)">编辑</button>
+    </div>
+  </div></div>`;
   html += centerHTML;
   el.innerHTML = html;
 
-  // Render play-displays from trick_history
-  for (let p = 0; p <= 3; p++) {
-    const pd = document.getElementById(`apd-${containerId}-${p}`);
-    if (!pd) continue;
-    const act = lastAction[p];
-    if (!act) { pd.innerHTML = ''; continue; }
-    if (act.pass) {
-      pd.innerHTML = '<span class="pass-text">过</span>';
-    } else if (act.combo) {
-      pd.innerHTML = `<span class="combo-tag">${act.combo.type_cn||act.combo.type}</span> ` + (act.combo.cards||[]).map(ac).join('');
-    }
-  }
-
   // Update play areas (状态区)
-  const paPrefix = containerId === 'tbl-p' ? 'p' : 't';
   for (let p = 0; p <= 3; p++) {
-    const pc = document.getElementById(paPrefix + 'pcard-' + p);
-    if (!pc) continue;
-    const act = lastAction[p];
-    if (!act) {
-      pc.innerHTML = cp === p ? '<span style="color:#27ae60;font-size:0.72em">轮到</span>' : '';
-    } else if (act.pass) {
-      pc.innerHTML = '<span style="color:#e67e22;font-size:0.72em">过</span>';
-    } else if (act.combo) {
-      pc.innerHTML = '<span style="color:#daa520;font-size:0.65em">' + (act.combo.type_cn||act.combo.type) + '</span> ' + (act.combo.cards||[]).map(ac).join('');
-    }
+    renderPlayState(p, lastAction[p], cp, paPrefix + 'pcard-' + p);
   }
 }
 
@@ -1942,6 +1931,21 @@ function customLoadFromSim(simState) {
 // ==================================================================
 // Render simulator state into builder layout
 // ==================================================================
+function renderPlayState(pid, lastAction, currentPlayer, pcardId) {
+  const pc = document.getElementById(pcardId);
+  if (!pc) return;
+  if (!lastAction) {
+    pc.innerHTML = currentPlayer === pid
+      ? '<span style="color:#27ae60;font-size:0.72em">轮到</span>' : '';
+  } else if (lastAction.pass) {
+    pc.innerHTML = '<span style="color:#e67e22;font-size:0.72em">过</span>';
+  } else if (lastAction.combo) {
+    pc.innerHTML = '<span style="color:#daa520;font-size:0.65em">'
+      + (lastAction.combo.type_cn||lastAction.combo.type) + '</span> '
+      + (lastAction.combo.cards||[]).map(ac).join('');
+  }
+}
+
 function renderSimState(state) {
   const names = ['你','右家','对家','左家'];
   const pls = state.players || [];
@@ -1987,17 +1991,7 @@ function renderSimState(state) {
     }
     pa.querySelectorAll('.czpa-btn').forEach(b => b.style.display = 'none');
 
-    const act = lastAction[p];
-    let cardsHtml = '';
-    if (!act) {
-      cardsHtml = cp === p ? '<span style="color:#27ae60;font-size:0.72em">轮到</span>' : '';
-    } else if (act.pass) {
-      cardsHtml = '<span style="color:#e67e22;font-size:0.72em">过</span>';
-    } else if (act.combo) {
-      cardsHtml = '<span style="color:#daa520;font-size:0.65em">' + (act.combo.type_cn||act.combo.type) + '</span> ';
-      cardsHtml += (act.combo.cards||[]).map(ac).join('');
-    }
-    document.getElementById('czpcard-' + p).innerHTML = cardsHtml;
+    renderPlayState(p, lastAction[p], cp, 'czpcard-' + p);
   }
 
   // Update center panel for sim mode

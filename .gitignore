@@ -27,3 +27,4 @@ instance/
 
 # log
 *.log
+logs/
