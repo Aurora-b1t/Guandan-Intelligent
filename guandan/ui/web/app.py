@@ -24,7 +24,7 @@ from .arena_api import arena_bp
 _CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config.json"
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get("GUANDAN_SECRET", os.urandom(24))
 app.register_blueprint(arena_bp)
 
 _games: dict = {}  # {sid: (InteractiveGame, last_access_timestamp)}
@@ -544,10 +544,12 @@ _COMBO_TYPE_CN = {
 # ==================================================================
 
 if __name__ == "__main__":
+    import os
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     print("=" * 50)
     print("  掼蛋 Guandan — Web UI")
     print("  Main menu: http://localhost:8765")
     print("  Game:      http://localhost:8765/game")
     print("  Arena:     http://localhost:8765/arena")
     print("=" * 50)
-    app.run(debug=True, host="0.0.0.0", port=8765)
+    app.run(debug=debug, host="0.0.0.0", port=8765)
