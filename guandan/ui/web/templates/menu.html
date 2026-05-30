@@ -35,6 +35,99 @@
   .menu-card .icon { font-size: 3em; margin-bottom: 12px; }
   .menu-card h2 { color: var(--accent); margin-bottom: 8px; }
   .menu-card p { color: #999; font-size: 0.9em; line-height: 1.5; }
+
+  /* ===== Modals ===== */
+  .modal-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.65);
+    z-index: 1000;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.active {
+    display: flex;
+  }
+  .modal-overlay.active .modal-content {
+    animation: modalIn 0.25s ease-out;
+  }
+  @keyframes modalIn {
+    from { transform: translateY(20px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+  .modal-content {
+    background: #1e3e1e;
+    border: 1px solid rgba(218,165,32,0.3);
+    border-radius: 14px;
+    max-width: 640px; width: 92vw;
+    max-height: 82vh;
+    overflow-y: auto;
+    padding: 28px 32px;
+    position: relative;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  }
+  .modal-content::-webkit-scrollbar { width: 6px; }
+  .modal-content::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15); border-radius: 3px;
+  }
+  .modal-content::-webkit-scrollbar-track { background: transparent; }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 12px;
+  }
+  .modal-header h2 { color: var(--accent); margin: 0; font-size: 1.4em; }
+  .modal-close {
+    background: none; border: 1px solid rgba(255,255,255,0.2);
+    color: #999; font-size: 1.3em; cursor: pointer;
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.2s, color 0.2s; line-height: 1;
+  }
+  .modal-close:hover { border-color: var(--accent); color: var(--accent); }
+  .rules-section { margin-bottom: 18px; }
+  .rules-section h3 {
+    color: var(--accent); font-size: 1.05em; margin-bottom: 6px;
+  }
+  .rules-section p, .rules-section li {
+    color: #bbb; font-size: 0.9em; line-height: 1.7;
+  }
+  .rules-section ul { padding-left: 20px; margin: 4px 0; }
+  .rules-section .note {
+    color: #888; font-size: 0.85em; margin-top: 2px;
+  }
+  .combo-table {
+    width: 100%; border-collapse: collapse; margin: 8px 0;
+    font-size: 0.85em;
+  }
+  .combo-table th, .combo-table td {
+    padding: 5px 8px; text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .combo-table th { color: #888; font-weight: normal; }
+  .combo-table td:first-child { color: var(--accent); white-space: nowrap; font-weight: bold; }
+  .combo-table td:last-child { color: #aaa; }
+  .combo-table .bomb-row td:first-child { color: #e74c3c; }
+  .combo-table .bomb-row td:last-child { color: #e4948a; }
+  .help-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  .help-item {
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px; padding: 14px;
+  }
+  .help-item h3 { color: var(--accent); font-size: 0.95em; margin-bottom: 4px; }
+  .help-item p { color: #bbb; font-size: 0.85em; line-height: 1.6; }
+  .help-item .key {
+    display: inline-block; background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px; padding: 1px 6px; margin: 0 2px;
+    font-family: monospace; font-size: 0.9em; color: #ddd;
+  }
+  @media (max-width: 480px) {
+    .help-grid { grid-template-columns: 1fr; }
+    .modal-content { padding: 20px 16px; }
+  }
 </style>
 </head>
 <body>
@@ -52,7 +145,166 @@
       <h2>AI 测试场</h2>
       <p>自定义残局场景<br>观察AI决策过程：手牌评估、候选评分、最终选择</p>
     </a>
+    <div class="menu-card" id="btn-rules" onclick="openRules()">
+      <div class="icon" style="font-size:2em">&#x1F4D6;</div>
+      <h2>游戏规则</h2>
+      <p>掼蛋完整规则说明<br>牌型、比较、计分、胜负</p>
+    </div>
+    <div class="menu-card" id="btn-help" onclick="openHelp()">
+      <div class="icon" style="font-size:2em">&#x2753;</div>
+      <h2>帮助</h2>
+      <p>平台使用指南<br>快捷键、AI提示、调试模式</p>
+    </div>
   </div>
 </div>
+
+<!-- Rules Modal -->
+<div class="modal-overlay" id="rules-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>&#x1F4D6; 游戏规则</h2>
+      <button class="modal-close" onclick="closeRules()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="rules-section">
+        <h3>级数系统</h3>
+        <p>游戏从 <b>2</b> 级开始，依次升级到 <b>A</b>（14）。当前级数的红心牌为<b>万能牌</b>（逢人配），可代替任意牌组成牌型。</p>
+      </div>
+      <div class="rules-section">
+        <h3>牌型列表</h3>
+        <table class="combo-table">
+          <tr><th>牌型</th><th>说明</th></tr>
+          <tr><td>单张</td><td>任意一张牌</td></tr>
+          <tr><td>对子</td><td>两张相同点数的牌</td></tr>
+          <tr><td>三同张</td><td>三张相同点数的牌</td></tr>
+          <tr><td>三带二</td><td>三同张 + 一对（副牌的牌点不影响比较）</td></tr>
+          <tr><td>顺子</td><td>5张或以上连续单张（2和王不能出现在顺子中）</td></tr>
+          <tr><td>连对 / 板凳</td><td>3对或以上连续对子</td></tr>
+          <tr><td>钢板 / 飞机</td><td>2组或以上连续三同张</td></tr>
+          <tr class="bomb-row"><td>普通炸弹</td><td>4-8张相同点数的牌（可含万能牌）</td></tr>
+          <tr class="bomb-row"><td>同花顺</td><td>5张同花色连续单张，威力大于同张数普炸</td></tr>
+          <tr class="bomb-row"><td>火箭 / 王炸</td><td>大王 + 小王，最大牌型，不可被压</td></tr>
+        </table>
+      </div>
+      <div class="rules-section">
+        <h3>出牌规则</h3>
+        <ul>
+          <li><b>跟牌</b>：必须出<b>同类型、同长度</b>的牌型，且主牌点<b>更大</b>。</li>
+          <li><b>炸弹</b>：可以压任何非炸弹牌型。</li>
+          <li><b>炸弹互压</b>：先比张数（越多越大），张数相同比点数。</li>
+          <li><b>同花顺</b>：大于同张数的普通炸弹，小于更多张的普通炸弹。</li>
+          <li><b>火箭</b>：可以压所有牌型，一旦打出<b>无人能压</b>。</li>
+        </ul>
+      </div>
+      <div class="rules-section">
+        <h3>过牌</h3>
+        <p>非首出玩家可以选过牌（不出牌）。首出玩家必须出牌。</p>
+      </div>
+      <div class="rules-section">
+        <h3>计分与升级</h3>
+        <ul>
+          <li><b>双上</b>（同队包揽前两名）：升 <b>3</b> 级</li>
+          <li><b>头游 + 三游</b>（队友第三名）：升 <b>2</b> 级</li>
+          <li><b>头游 + 末游</b>（队友第四名）：升 <b>1</b> 级</li>
+        </ul>
+      </div>
+      <div class="rules-section">
+        <h3>胜负条件</h3>
+        <p>在 <b>A 级</b>时赢得一局即可获得整场游戏胜利。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Help Modal -->
+<div class="modal-overlay" id="help-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>&#x2753; 帮助</h2>
+      <button class="modal-close" onclick="closeHelp()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="help-grid">
+        <div class="help-item">
+          <h3>开始游戏</h3>
+          <p>点击「四人対战」进入对局页面，再点击「开始游戏」按钮即可开始。</p>
+        </div>
+        <div class="help-item">
+          <h3>选择与出牌</h3>
+          <p>点击手牌选中（再次点击取消），然后点「出牌」或按 <span class="key">Enter</span> 键。</p>
+        </div>
+        <div class="help-item">
+          <h3>键盘快捷键</h3>
+          <p><span class="key">Enter</span> 出牌 &nbsp; <span class="key">Space</span> 过牌 &nbsp; <span class="key">Ctrl+D</span> 调试模式</p>
+        </div>
+        <div class="help-item">
+          <h3>组牌功能</h3>
+          <p>选中手牌后点击「组牌」，将牌组织为预定义牌型，显示在手牌右侧的牌列中。</p>
+        </div>
+        <div class="help-item">
+          <h3>AI 提示</h3>
+          <p>点击「提示」获取快速出牌建议；点击「AI决策」查看候选分析与胜率估算。</p>
+        </div>
+        <div class="help-item">
+          <h3>AI 评估</h3>
+          <p>选中一组牌后点击「AI评估」，通过蒙特卡洛模拟评估该组合的胜率。</p>
+        </div>
+        <div class="help-item">
+          <h3>自动对局</h3>
+          <p>点击「自动对局」让AI代打出牌，再次点击停止自动模式。</p>
+        </div>
+        <div class="help-item">
+          <h3>调试模式</h3>
+          <p><span class="key">Ctrl+D</span> 显示所有玩家的隐藏手牌。右侧面板可查看AI决策日志。</p>
+        </div>
+        <div class="help-item">
+          <h3>AI 测试场</h3>
+          <p>在主界面选择「AI 测试场」，可加载预设残局场景，对比不同模型表现。</p>
+        </div>
+        <div class="help-item">
+          <h3>更多</h3>
+          <p>对局页面左侧有AI配置面板，可调整模型参数；右上角可查看对局记录。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function openRules() {
+  document.getElementById('rules-modal').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+function closeRules() {
+  document.getElementById('rules-modal').classList.remove('active');
+  document.body.style.overflow = '';
+}
+function openHelp() {
+  document.getElementById('help-modal').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+function closeHelp() {
+  document.getElementById('help-modal').classList.remove('active');
+  document.body.style.overflow = '';
+}
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay')) {
+    e.target.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    ['rules-modal', 'help-modal'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el.classList.contains('active')) {
+        el.classList.remove('active');
+        document.body.style.overflow = '';
+      }
+    });
+  }
+});
+</script>
+
 </body>
 </html>

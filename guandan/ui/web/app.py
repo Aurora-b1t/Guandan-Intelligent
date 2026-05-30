@@ -24,6 +24,7 @@ from .arena_api import arena_bp
 _CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config.json"
 
 app = Flask(__name__)
+app.jinja_env.auto_reload = True
 app.secret_key = os.environ.get("GUANDAN_SECRET", os.urandom(24))
 app.register_blueprint(arena_bp)
 
