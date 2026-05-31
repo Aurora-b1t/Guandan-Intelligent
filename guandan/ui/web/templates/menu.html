@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>掼蛋 Guandan</title>
+<link rel="stylesheet" href="/static/tokens.css">
 <style>
-  :root { --bg: #1a3a1a; --accent: #daa520; --text: #eee; }
+  /* Design tokens from tokens.css (--bg, --accent, --text, etc.) */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);
@@ -17,14 +18,14 @@
     text-align: center;
   }
   .menu h1 { font-size: 3em; color: var(--accent); margin-bottom: 8px; }
-  .menu .subtitle { color: #888; margin-bottom: 40px; font-size: 1.1em; }
+  .menu .subtitle { color: var(--text-muted); margin-bottom: 40px; font-size: 1.1em; }
   .menu-cards {
     display: flex; gap: 24px; justify-content: center; flex-wrap: wrap;
   }
   .menu-card {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 14px; padding: 32px 28px;
+    background: var(--white-06);
+    border: 1px solid var(--white-12);
+    border-radius: var(--radius-xl); padding: 32px 28px;
     width: 280px; cursor: pointer;
     transition: border-color 0.2s, transform 0.2s;
     text-decoration: none; color: inherit; display: block;
@@ -34,7 +35,7 @@
   }
   .menu-card .icon { font-size: 3em; margin-bottom: 12px; }
   .menu-card h2 { color: var(--accent); margin-bottom: 8px; }
-  .menu-card p { color: #999; font-size: 0.9em; line-height: 1.5; }
+  .menu-card p { color: var(--text-dim); font-size: 0.9em; line-height: 1.5; }
 
   /* ===== Modals ===== */
   .modal-overlay {
@@ -67,7 +68,7 @@
   }
   .modal-content::-webkit-scrollbar { width: 6px; }
   .modal-content::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.15); border-radius: 3px;
+    background: var(--white-15); border-radius: 3px;
   }
   .modal-content::-webkit-scrollbar-track { background: transparent; }
   .modal-header {
@@ -79,7 +80,7 @@
   .modal-header h2 { color: var(--accent); margin: 0; font-size: 1.4em; }
   .modal-close {
     background: none; border: 1px solid rgba(255,255,255,0.2);
-    color: #999; font-size: 1.3em; cursor: pointer;
+    color: var(--text-dim); font-size: 1.3em; cursor: pointer;
     width: 34px; height: 34px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     transition: border-color 0.2s, color 0.2s; line-height: 1;
@@ -90,11 +91,11 @@
     color: var(--accent); font-size: 1.05em; margin-bottom: 6px;
   }
   .rules-section p, .rules-section li {
-    color: #bbb; font-size: 0.9em; line-height: 1.7;
+    color: var(--text-secondary); font-size: 0.9em; line-height: 1.7;
   }
   .rules-section ul { padding-left: 20px; margin: 4px 0; }
   .rules-section .note {
-    color: #888; font-size: 0.85em; margin-top: 2px;
+    color: var(--text-muted); font-size: 0.85em; margin-top: 2px;
   }
   .combo-table {
     width: 100%; border-collapse: collapse; margin: 8px 0;
@@ -102,27 +103,27 @@
   }
   .combo-table th, .combo-table td {
     padding: 5px 8px; text-align: left;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--white-06);
   }
-  .combo-table th { color: #888; font-weight: normal; }
+  .combo-table th { color: var(--text-muted); font-weight: normal; }
   .combo-table td:first-child { color: var(--accent); white-space: nowrap; font-weight: bold; }
-  .combo-table td:last-child { color: #aaa; }
-  .combo-table .bomb-row td:first-child { color: #e74c3c; }
+  .combo-table td:last-child { color: var(--color-gray-500); }
+  .combo-table .bomb-row td:first-child { color: var(--error); }
   .combo-table .bomb-row td:last-child { color: #e4948a; }
   .help-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   }
   .help-item {
-    background: rgba(255,255,255,0.04);
+    background: var(--white-04);
     border-radius: 8px; padding: 14px;
   }
   .help-item h3 { color: var(--accent); font-size: 0.95em; margin-bottom: 4px; }
-  .help-item p { color: #bbb; font-size: 0.85em; line-height: 1.6; }
+  .help-item p { color: var(--text-secondary); font-size: 0.85em; line-height: 1.6; }
   .help-item .key {
     display: inline-block; background: rgba(255,255,255,0.1);
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 4px; padding: 1px 6px; margin: 0 2px;
-    font-family: monospace; font-size: 0.9em; color: #ddd;
+    border: 1px solid var(--white-20);
+    border-radius: var(--radius-sm); padding: 1px 6px; margin: 0 2px;
+    font-family: monospace; font-size: 0.9em; color: var(--color-gray-200);
   }
   @media (max-width: 480px) {
     .help-grid { grid-template-columns: 1fr; }

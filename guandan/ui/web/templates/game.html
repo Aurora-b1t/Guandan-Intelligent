@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>掼蛋 Guandan</title>
+<link rel="stylesheet" href="/static/tokens.css">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -119,6 +120,7 @@
   <style>
     .cfg-tab { background:#333; color:#999; border:none; padding:4px 14px; border-radius:5px 5px 0 0; cursor:pointer; font-size:0.85em }
     .cfg-tab.active { background:#555; color:#fff }
+    
   </style>
 
   <!-- Suggestion Panel -->
@@ -176,6 +178,9 @@
   </div>
 </div>
 
+<script src="/static/lib/constants.js"></script>
+<script src="/static/lib/card.js"></script>
+<script src="/static/lib/api.js"></script>
 <script>window.__INITIAL_STATE__ = {{ initial_state|safe }};</script>
 <script src="/static/game.js"></script>
 </body>

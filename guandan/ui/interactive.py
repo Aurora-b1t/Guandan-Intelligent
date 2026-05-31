@@ -51,6 +51,7 @@ class InteractiveGame:
         import copy
         self.config = copy.deepcopy(DEFAULT_CONFIG)
         self._auto_play = False
+        self._auto_human_pending = False
         self._game_started = False
         self._human_win_rate = None
         # Action log — memory module
@@ -158,7 +159,7 @@ class InteractiveGame:
         # Don't auto-start AI — wait for "开始游戏" button
         self._game_started = False
         self._ai_running = False
-
+        self._auto_human_pending = False
         self._message = "点击「开始游戏」" if not self._game_started else ""
         return self._build_state()
 
@@ -213,6 +214,15 @@ class InteractiveGame:
             self._ai_running = False
             return
 
+        # Process deferred human auto-play (thinking glow was shown last poll)
+        if self._auto_human_pending:
+            self._auto_human_pending = False
+            self._ai_play(self.HUMAN_ID)
+            if len(self.state.finished_positions) >= 3:
+                self._finish_round()
+                self._ai_running = False
+            return
+
         table = self.state.table
 
         # Check if trick ended
@@ -234,11 +244,10 @@ class InteractiveGame:
 
         if current == self.HUMAN_ID:
             if self._auto_play:
-                # Human slot is AI-controlled — keep running
-                self._ai_play(self.HUMAN_ID)
-                if len(self.state.finished_positions) >= 3:
-                    self._finish_round()
-                    self._ai_running = False
+                # Human slot is AI-controlled.
+                # Defer to next poll so frontend can show thinking glow first.
+                self.state.current_player = self.HUMAN_ID
+                self._auto_human_pending = True
                 return
             else:
                 self.state.current_player = current
@@ -266,6 +275,13 @@ class InteractiveGame:
                         pass
                     else:
                         self._ai_running = False
+                        return
+
+        # After all checks: if next active player is human (non-auto),
+        # stop AI running to prevent a one-frame flash on the human zone.
+        next_up = self._next_active_player(self.state.current_player)
+        if next_up == self.HUMAN_ID and not self._auto_play:
+            self._ai_running = False
 
     # ------------------------------------------------------------------
     # Auto-play AI turns
@@ -399,6 +415,7 @@ class InteractiveGame:
 
     def _finish_round(self) -> dict:
         """Calculate round result and check for game over."""
+        self._auto_human_pending = False
         result = calculate_result(self.state.finished_positions)
         self._round_results.append(result)
 
@@ -555,7 +572,12 @@ class InteractiveGame:
             "round_results": round_results,
             "trick_history": trick_history,
             "ai_running": self._ai_running,
-            "ai_thinking_player": self.state.current_player if self._ai_running else -1,
+            "ai_thinking_player": (
+                self.HUMAN_ID if self._auto_human_pending
+                else self.state.current_player if self._ai_running
+                    and not (self.state.current_player == self.HUMAN_ID and not self._auto_play)
+                else -1
+            ),
             "auto_play": self._auto_play,
             "game_started": self._game_started,
             "human_win_rate": self._human_win_rate,

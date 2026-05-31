@@ -1,0 +1,96 @@
+/* ================================================================
+   Guandan Web UI — Design Tokens (single source of truth)
+   Loaded BEFORE style.css and arena.css
+   ================================================================ */
+
+:root {
+  /* ---- Palette ---- */
+  --color-gold:        #daa520;
+  --color-green-dark:  #1a3a1a;
+  --color-green-table: #2d5a27;
+  --color-green-border:#3d7a37;
+  --color-navy-bg:     #1a1a2e;
+  --color-navy-panel:  #16213e;
+  --color-navy-modal:  #1e1e32;
+  --color-red:         #c0392b;
+  --color-orange:      #e67e22;
+  --color-blue:        #2980b9;
+  --color-teal:        #4ecdc4;
+  --color-green:       #27ae60;
+  --color-purple:      #8e44ad;
+  --color-yellow:      #f1c40f;
+  --color-wild-glow:   #ff6b9d;
+
+  /* ---- Neutrals ---- */
+  --color-white:       #ffffff;
+  --color-gray-100:    #eee;
+  --color-gray-200:    #ddd;
+  --color-gray-300:    #ccc;
+  --color-gray-400:    #bbb;
+  --color-gray-500:    #aaa;
+  --color-gray-600:    #999;
+  --color-gray-700:    #888;
+  --color-gray-800:    #666;
+  --color-gray-850:    #555;
+  --color-gray-900:    #444;
+  --color-gray-950:    #333;
+  --color-gray-980:    #222;
+
+  /* ---- Transparent overlays ---- */
+  --white-02:  rgba(255,255,255,0.02);
+  --white-03:  rgba(255,255,255,0.03);
+  --white-04:  rgba(255,255,255,0.04);
+  --white-05:  rgba(255,255,255,0.05);
+  --white-06:  rgba(255,255,255,0.06);
+  --white-08:  rgba(255,255,255,0.08);
+  --white-12:  rgba(255,255,255,0.12);
+  --white-15:  rgba(255,255,255,0.15);
+  --white-20:  rgba(255,255,255,0.20);
+
+  /* ---- Semantic roles ---- */
+  --accent:           var(--color-gold);
+  --bg:               var(--color-green-dark);
+  --bg-arena:         var(--color-navy-bg);
+  --table:            var(--color-green-table);
+  --table-bg:         var(--color-green-table);
+  --table-border:     var(--color-green-border);
+  --panel-bg:         var(--color-navy-bg);
+  --panel-dark:       var(--color-navy-panel);
+  --panel-modal:      var(--color-navy-modal);
+
+  /* ---- Text ---- */
+  --text:             var(--color-gray-100);
+  --text-secondary:   var(--color-gray-400);
+  --text-dim:         var(--color-gray-600);
+  --text-muted:       var(--color-gray-700);
+
+  /* ---- Cards ---- */
+  --card-bg:          #fffef5;
+  --card-border:      #c8b898;
+  --card-w:           56px;
+  --card-h:           78px;
+  --card-w-sm:        40px;
+  --card-h-sm:        56px;
+  --card-w-xs:        36px;
+  --card-h-xs:        50px;
+  --card-w-xxs:       30px;
+  --card-h-xxs:       42px;
+
+  /* ---- Suits ---- */
+  --suit-spade:       #2c3e50;
+  --suit-heart:       var(--color-red);
+  --suit-diamond:     var(--color-blue);
+  --suit-club:        var(--color-green);
+  --suit-none:        var(--color-gray-700);
+
+  /* ---- States ---- */
+  --selected:         var(--color-yellow);
+  --error:            var(--color-red);
+  --wild-glow:        var(--color-wild-glow);
+
+  /* ---- Radii ---- */
+  --radius-sm:        4px;
+  --radius-md:        6px;
+  --radius-lg:        10px;
+  --radius-xl:        14px;
+}

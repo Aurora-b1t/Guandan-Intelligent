@@ -23,8 +23,7 @@ const PLAYER_NAMES = ['你', 'AI-右家', 'AI-对家', 'AI-左家'];
 // ==================================================================
 
 async function fetchState() {
-  const r = await fetch('/api/state');
-  gameState = await r.json();
+  gameState = await gameApi.getState();
   render();
   if (debugMode) fetchDebug();
   if (aiDebugOpen || showWinRate) fetchAILog();
@@ -32,8 +31,7 @@ async function fetchState() {
 
 function schedulePoll() {
   pollTimer = setTimeout(async () => {
-    const r = await fetch('/api/state');
-    gameState = await r.json();
+    gameState = await gameApi.getState();
     render();
     if (debugMode) fetchDebug();
     if (aiDebugOpen || showWinRate) fetchAILog();
@@ -69,12 +67,7 @@ async function playCards() {
     return;
   }
 
-  const r = await fetch('/api/play', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({card_ids: cardIds}),
-  });
-  gameState = await r.json();
+  gameState = await gameApi.playCards(cardIds);
   selectedCards.clear();
   activeStrip = null;
   if (cardIds) {
@@ -92,8 +85,7 @@ async function playCards() {
 
 async function passTurn() {
   if (!myTurn) return;
-  const r = await fetch('/api/pass', {method: 'POST'});
-  gameState = await r.json();
+  gameState = await gameApi.passTurn();
   selectedCards.clear();
   activeStrip = null;
   document.getElementById('suggest-panel').style.display = 'none';
@@ -102,8 +94,7 @@ async function passTurn() {
 }
 
 async function newGame() {
-  const r = await fetch('/api/new_game', {method: 'POST'});
-  gameState = await r.json();
+  gameState = await gameApi.newGame();
   selectedCards.clear();
   activeStrip = null;
   comboStrips = [];
@@ -114,8 +105,7 @@ async function newGame() {
 }
 
 async function newRound() {
-  const r = await fetch('/api/new_round', {method: 'POST'});
-  gameState = await r.json();
+  gameState = await gameApi.newRound();
   selectedCards.clear();
   activeStrip = null;
   comboStrips = [];
@@ -133,8 +123,7 @@ function clearPlayZones() {
 
 async function showHint() {
   if (!myTurn || !gameState) return;
-  const r = await fetch('/api/hint');
-  const data = await r.json();
+  const data = await gameApi.getHint();
   selectedCards.clear();
   activeStrip = null;
   if (data.card_ids) {
@@ -144,8 +133,7 @@ async function showHint() {
 }
 
 async function fetchDebug() {
-  const r = await fetch('/api/debug');
-  const data = await r.json();
+  const data = await gameApi.getDebug();
   if (data.hands) renderDebugHands(data.hands);
 }
 
@@ -528,13 +516,12 @@ function toggleAIDebug() {
 }
 
 async function fetchAILog() {
-  const r = await fetch('/api/ai_log');
-  const data = await r.json();
+  const data = await gameApi.getAILog();
   renderAILog(data);
 }
 
 async function clearAILog() {
-  await fetch('/api/ai_log/clear', {method: 'POST'});
+  await gameApi.clearAILog();
   document.getElementById('ai-debug-content').innerHTML =
     '<div style="color:#888;padding:10px">日志已清空</div>';
 }
@@ -664,9 +651,7 @@ function toggleWinRate() {
 // ==================================================================
 
 async function startGame() {
-  document.getElementById('start-overlay').style.display = 'none';
-  const r = await fetch('/api/start_game', {method: 'POST'});
-  gameState = await r.json();
+  gameState = await gameApi.startGame();
   render();
   if (debugMode) fetchDebug();
 }
@@ -678,12 +663,7 @@ async function startGame() {
 async function toggleAutoPlay() {
   const btn = document.getElementById('btn-auto-play');
   const isAuto = btn.textContent.includes('停止');
-  const r = await fetch('/api/auto_play', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({enabled: !isAuto}),
-  });
-  const d = await r.json();
+  const d = await gameApi.toggleAutoPlay(!isAuto);
   btn.textContent = d.auto_play ? '停止自动' : '自动对局';
   btn.style.background = d.auto_play ? '#c0392b' : '#555';
   if (d.auto_play) {
@@ -704,8 +684,7 @@ async function aiSuggest() {
   panel.style.display = 'block';
   content.innerHTML = '<span style="color:#aaa">AI 正在分析...</span>';
 
-  const r = await fetch('/api/suggest');
-  const d = await r.json();
+  const d = await gameApi.getSuggest();
   const hasOnlyPass = (!d.candidates || d.candidates.length === 0) ||
     (d.candidates.length === 1 && d.candidates[0].type === 'PASS');
   if (hasOnlyPass) {
@@ -848,12 +827,7 @@ async function aiEvaluate() {
   const cardIds = selectedCards ? Array.from(selectedCards) : [];
   content.innerHTML = '<span style="color:#aaa">AI 分析中...</span>';
 
-  const r = await fetch('/api/evaluate', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({card_ids: cardIds}),
-  });
-  const d = await r.json();
+  const d = await gameApi.evaluate(cardIds);
 
   if (d.info) {
     content.innerHTML = `<span style="color:#daa520">${d.info}</span>`;
@@ -917,8 +891,7 @@ async function toggleConfig() {
 }
 
 async function fetchConfig() {
-  const r = await fetch('/api/config');
-  const d = await r.json();
+  const d = await gameApi.getConfig();
   schema = d.schema || {};
   currentConfig = d.config || {};
   buildConfigTab('global', null);
@@ -1056,7 +1029,7 @@ async function applyConfig() {
     if (!cb || !cb.checked) currentConfig.players[p] = {decider: null, params: {}};
   }
 
-  await fetch('/api/config', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentConfig)});
+  await gameApi.saveConfig(currentConfig);
   const msg = document.getElementById('message'); msg.textContent = 'AI设置已保存'; msg.style.color = '#27ae60';
   setTimeout(() => { msg.textContent = ''; msg.style.color = ''; }, 1500);
   await fetchConfig();
